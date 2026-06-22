@@ -3,6 +3,8 @@
 A macOS menu bar "control center" for your Claude Code sessions — across the
 Terminal CLI, the VS Code extension, and the Claude Desktop app.
 
+![Claude Companion menu bar popover showing sessions that are waiting, working, and done](docs/hero.png)
+
 - **Menu bar icon** that *animates* while any session is thinking, shows an
   **orange attention badge** when a session is waiting for you, and sits calm
   when everything is done.

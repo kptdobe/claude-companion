@@ -1,0 +1,83 @@
+<svg width="1000" height="640" viewBox="0 0 1000 640" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2a2440"/>
+      <stop offset="1" stop-color="#15131f"/>
+    </linearGradient>
+    <linearGradient id="pop" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#34323a"/>
+      <stop offset="1" stop-color="#2a282f"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="14" stdDeviation="22" flood-color="#000" flood-opacity="0.45"/>
+    </filter>
+    <style>
+      text { font-family: -apple-system, "SF Pro Text", "Helvetica Neue", Arial, sans-serif; }
+      .title { font-size: 46px; font-weight: 700; fill: #ffffff; }
+      .tag   { font-size: 21px; font-weight: 400; fill: #b9b4d0; }
+      .menuhdr { font-size: 15px; font-weight: 600; fill: #8e8b97; letter-spacing: 0.5px; }
+      .item  { font-size: 16px; font-weight: 500; fill: #f2f1f5; }
+      .ep    { font-size: 16px; font-weight: 400; fill: #8e8b97; }
+      .note  { font-size: 14px; font-weight: 400; fill: #6f6c78; font-style: italic; }
+      .quit  { font-size: 16px; font-weight: 400; fill: #f2f1f5; }
+      .leg   { font-size: 15px; font-weight: 400; fill: #b9b4d0; }
+    </style>
+  </defs>
+
+  <rect width="1000" height="640" fill="url(#bg)"/>
+
+  <!-- heading -->
+  <text x="60" y="92" class="title">Claude Companion</text>
+  <text x="62" y="132" class="tag">Know which Claude session needs you — and jump straight to it.</text>
+
+  <!-- faux menu bar with active icon -->
+  <rect x="60" y="168" width="880" height="34" rx="8" fill="#ffffff" opacity="0.06"/>
+  <g transform="translate(908,185)">
+    <path d="M -9 0 A 9 9 0 1 1 6.4 6.4" fill="none" stroke="#cfcad9" stroke-width="2.4" stroke-linecap="round"/>
+    <path d="M 6.4 6.4 l 5 -1 l -1 5 z" fill="#cfcad9"/>
+  </g>
+
+  <!-- popover -->
+  <g filter="url(#shadow)">
+    <rect x="250" y="214" width="500" height="372" rx="16" fill="url(#pop)" stroke="#ffffff" stroke-opacity="0.08"/>
+  </g>
+
+  <text x="278" y="252" class="menuhdr">CLAUDE — 3 SESSIONS</text>
+  <line x1="270" y1="268" x2="730" y2="268" stroke="#ffffff" stroke-opacity="0.08"/>
+
+  <!-- item: waiting -->
+  <g transform="translate(282,296)">
+    <circle cx="11" cy="-5" r="11" fill="#ff9f0a"/>
+    <rect x="9.2" y="-11" width="3.6" height="8" rx="1.8" fill="#fff"/>
+    <circle cx="11" cy="0.5" r="2" fill="#fff"/>
+    <text x="36" y="0" class="item">Fix RUM 500 <tspan class="ep">·  VS Code</tspan></text>
+  </g>
+
+  <!-- item: working -->
+  <g transform="translate(282,344)">
+    <circle cx="11" cy="-5" r="11" fill="#0a84ff"/>
+    <path d="M 4 -5 A 7 7 0 1 1 16 -1" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/>
+    <path d="M 16 -1 l 3.6 -0.8 l -0.8 3.6 z" fill="#fff"/>
+    <text x="36" y="0" class="item">macOS Claude companion app <tspan class="ep">·  Claude Desktop</tspan></text>
+  </g>
+
+  <!-- item: done -->
+  <g transform="translate(282,392)">
+    <circle cx="11" cy="-5" r="11" fill="#30d158"/>
+    <path d="M 6 -5 l 3.4 3.4 l 6.2 -7" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="36" y="0" class="item">da-live unit tests <tspan class="ep">·  Terminal</tspan></text>
+  </g>
+
+  <line x1="270" y1="424" x2="730" y2="424" stroke="#ffffff" stroke-opacity="0.08"/>
+  <text x="282" y="454" class="note">21 older sessions hidden (no activity since launch)</text>
+
+  <line x1="270" y1="476" x2="730" y2="476" stroke="#ffffff" stroke-opacity="0.08"/>
+  <text x="282" y="510" class="quit">Quit Claude Companion</text>
+
+  <!-- legend -->
+  <g transform="translate(282,556)">
+    <circle cx="6" cy="-5" r="6" fill="#ff9f0a"/><text x="18" y="0" class="leg">Waiting for you</text>
+    <g transform="translate(160,0)"><circle cx="6" cy="-5" r="6" fill="#0a84ff"/><text x="18" y="0" class="leg">Working</text></g>
+    <g transform="translate(290,0)"><circle cx="6" cy="-5" r="6" fill="#30d158"/><text x="18" y="0" class="leg">Done</text></g>
+  </g>
+</svg>
