@@ -1,0 +1,44 @@
+#!/bin/sh
+# claude-companion-hook <state>
+#
+# Invoked by Claude Code hooks. Reads the hook payload (JSON) on stdin and
+# writes a tiny per-session state file the menu bar app watches:
+#   ~/.claude/companion-state/<session_id>.json
+#
+# <state> is one of: thinking | waiting | idle
+# It is passed as the only argument from the hook configuration so this script
+# stays trivial and fast (no per-event JSON branching here).
+
+STATE="${1:-unknown}"
+DIR="${CLAUDE_COMPANION_STATE_DIR:-$HOME/.claude/companion-state}"
+mkdir -p "$DIR" 2>/dev/null
+
+# Extract session_id / cwd / hook event from the stdin payload and write the
+# state file. We use `python3 -c` (not a heredoc with `-`) so the piped JSON
+# payload stays on stdin instead of being consumed as the program source.
+# python3 ships with macOS Command Line Tools; fast and dependency-free.
+python3 -c '
+import sys, os, json, time
+state, out_dir = sys.argv[1], sys.argv[2]
+try:
+    payload = json.load(sys.stdin)
+except Exception:
+    payload = {}
+session_id = payload.get("session_id") or "unknown"
+record = {
+    "sessionId": session_id,
+    "state": state,
+    "event": payload.get("hook_event_name"),
+    "cwd": payload.get("cwd"),
+    "ts": time.time(),
+}
+# Atomic write: temp file + rename, so the watcher never reads a half-written file.
+path = os.path.join(out_dir, session_id + ".json")
+tmp = path + ".tmp"
+with open(tmp, "w") as f:
+    json.dump(record, f)
+os.replace(tmp, path)
+' "$STATE" "$DIR"
+
+# Never block Claude Code: always succeed.
+exit 0
