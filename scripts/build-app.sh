@@ -53,9 +53,20 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
-# Ad-hoc sign so TCC can track a stable identity across launches.
-codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || \
-    echo "(codesign skipped — not fatal for local use)"
+# Sign with a stable self-signed identity when available, so the Accessibility
+# permission (needed to switch windows) persists across rebuilds. Falls back to
+# ad-hoc, whose identity changes every build and forces macOS to re-prompt.
+SIGN_IDENTITY="Claude Companion Local"
+if security find-certificate -c "$SIGN_IDENTITY" >/dev/null 2>&1; then
+    echo "Signing with stable identity '$SIGN_IDENTITY'…"
+    codesign --force --deep --sign "$SIGN_IDENTITY" \
+        --identifier "com.acapt.claude-companion" "$APP"
+else
+    echo "No stable signing identity found — using ad-hoc signing."
+    echo "  Run scripts/setup-signing.sh once so the Accessibility grant persists."
+    codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || \
+        echo "  (codesign skipped — not fatal for local use)"
+fi
 
 echo "Built $APP"
 echo "Launch with: open \"$APP\"   (or add it to Login Items)"

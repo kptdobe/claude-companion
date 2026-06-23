@@ -26,26 +26,30 @@ enum WindowActivator {
 
     // MARK: - VS Code
 
+    /// Known VS Code family bundle identifiers, in preference order.
+    private static let vscodeBundleIDs = [
+        "com.microsoft.VSCode",          // VS Code
+        "com.microsoft.VSCodeInsiders",  // Insiders
+        "com.visualstudio.code.oss",     // Code - OSS
+        "com.vscodium",                  // VSCodium
+    ]
+
     private static func activateVSCode(for session: Session, ideLocks: [IDELock]) {
-        // The window title contains the workspace folder's basename.
+        // Prefer the IDE workspace that actually contains the session's cwd, so
+        // we raise the window for *this* project, not a sibling.
         let folder = bestWorkspace(for: session.cwd, in: ideLocks) ?? session.cwd
-        let name = (folder as NSString).lastPathComponent
-        let escaped = name.replacingOccurrences(of: "\"", with: "\\\"")
-        let script = """
-        tell application "Visual Studio Code" to activate
-        tell application "System Events"
-            tell process "Code"
-                set frontmost to true
-                repeat with w in windows
-                    if name of w contains "\(escaped)" then
-                        perform action "AXRaise" of w
-                        exit repeat
-                    end if
-                end repeat
-            end tell
-        end tell
-        """
-        run(script)
+
+        guard let app = WindowFocuser.runningApp(bundleIDs: vscodeBundleIDs) else {
+            run("tell application \"Visual Studio Code\" to activate")
+            return
+        }
+
+        let raised = WindowFocuser.focus(app: app, workspaceFolder: folder)
+        // If we couldn't raise the right window only because we lack Accessibility
+        // permission, prompt for it once (the app is already frontmost regardless).
+        if !raised && !WindowFocuser.isTrusted {
+            WindowFocuser.promptForAccessibilityOnce()
+        }
     }
 
     /// Pick the IDE workspace that best contains the session cwd.

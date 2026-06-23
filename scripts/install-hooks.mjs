@@ -28,9 +28,12 @@ const EVENT_STATE = {
   PreCompact: 'thinking',
   // A subagent finishing doesn't end the main turn — keep it "thinking".
   SubagentStop: 'thinking',
+  // Orange is only for "needs your input to proceed".
   Notification: 'waiting',
-  // `Stop` = the turn ended and Claude needs you. This is the attention state.
-  Stop: 'waiting',
+  // `Stop` = the turn ended with nothing required from you → done (green).
+  // Blocking tools (AskUserQuestion / ExitPlanMode) are upgraded to "waiting"
+  // inside the hook script via tool-name detection.
+  Stop: 'idle',
   SessionEnd: 'idle',
 };
 const MATCHER_EVENTS = new Set(['PreToolUse', 'PostToolUse', 'PreCompact']);

@@ -68,12 +68,13 @@ enum SessionActivity: String, Codable {
         // so the main loop keeps thinking.
         case "UserPromptSubmit", "PreToolUse", "PostToolUse", "PreCompact", "SubagentStop":
             return .thinking
-        // Needs you: a permission/idle notification, OR the turn just ended —
-        // in Claude Code, `Stop` is precisely when it's your move again.
-        case "Notification", "Stop":
+        // Needs your input to proceed (a permission / idle notification).
+        // Blocking *tools* are handled by `from(hookEvent:toolName:)`.
+        case "Notification":
             return .waiting
-        // The whole session has closed.
-        case "SessionEnd":
+        // The turn ended (or the session closed) with nothing required from
+        // you → done. Orange is reserved for "you must respond".
+        case "Stop", "SessionEnd":
             return .idle
         default:
             return .unknown

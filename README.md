@@ -56,22 +56,28 @@ Restart any already-running Claude Code sessions so they pick up the hooks.
 ```sh
 swift build && swift run        # quick dev run
 # — or build a proper menu bar .app bundle —
+scripts/setup-signing.sh        # one time: stable self-signed identity (see below)
 scripts/build-app.sh            # dry-run
 scripts/build-app.sh -x         # build ClaudeCompanion.app
 open ClaudeCompanion.app
 ```
 
+**Run `scripts/setup-signing.sh` once before building.** It creates a stable,
+self-signed code-signing identity in your login keychain. Without it the app is
+ad-hoc signed, its identity changes on every rebuild, and macOS forgets the
+Accessibility permission — re-prompting you on every click. With it, the grant
+sticks across rebuilds.
+
 ### 3. Grant permissions (first jump-to-window)
 
-Jumping to a window uses AppleScript/Accessibility. On first use macOS will
-prompt for:
+Jumping to the right window uses the Accessibility API. On first use macOS
+prompts once; grant it in **System Settings → Privacy & Security →
+Accessibility** (enable **Claude Companion**), then click the session again.
 
-- **Automation** — to control VS Code, Terminal/iTerm, and Claude.
-- **Accessibility** (System Settings → Privacy & Security → Accessibility) —
-  to raise the matching VS Code window.
-
-Building the `.app` bundle (step 2) gives the app a stable identity so these
-permissions persist across launches.
+- Terminal/iTerm tab targeting additionally uses **Automation** (to read the
+  controlling TTY), which prompts separately.
+- If you previously ran an ad-hoc build, remove any stale **Claude Companion**
+  entries from the Accessibility list first, then grant the signed build once.
 
 ## Development
 
@@ -88,9 +94,11 @@ swift build
 | `Sources/ClaudeCompanion/SessionMonitor.swift` | discovers sessions, checks liveness, merges state |
 | `Sources/ClaudeCompanion/StatusItemController.swift` | menu bar icon (animated) + session menu |
 | `Sources/ClaudeCompanion/WindowActivator.swift` | jump-to-window per entrypoint |
+| `Sources/ClaudeCompanion/WindowFocuser.swift` | native Accessibility-API window raising + title matching |
 | `scripts/claude-companion-hook` | per-event state writer (runs inside Claude Code) |
 | `scripts/install-hooks.mjs` | wires the hooks into `settings.json` (dry-run by default) |
-| `scripts/build-app.sh` | assembles the `.app` bundle |
+| `scripts/setup-signing.sh` | one-time stable self-signed code-signing identity |
+| `scripts/build-app.sh` | assembles + signs the `.app` bundle |
 
 ## Status / roadmap
 

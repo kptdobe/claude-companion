@@ -23,9 +23,10 @@ final class SessionActivityTests: XCTestCase {
         XCTAssertEqual(SessionActivity.from(hookEvent: "UserPromptSubmit"), .thinking)
         XCTAssertEqual(SessionActivity.from(hookEvent: "PreToolUse"), .thinking)
         XCTAssertEqual(SessionActivity.from(hookEvent: "PostToolUse"), .thinking)
+        // Orange is only for "needs your input to proceed".
         XCTAssertEqual(SessionActivity.from(hookEvent: "Notification"), .waiting)
-        // Stop = the turn ended and Claude now needs you — that's the attention state.
-        XCTAssertEqual(SessionActivity.from(hookEvent: "Stop"), .waiting)
+        // Stop = the turn ended with nothing required from you → done (green).
+        XCTAssertEqual(SessionActivity.from(hookEvent: "Stop"), .idle)
         // A subagent finishing doesn't end the main turn — Claude keeps working.
         XCTAssertEqual(SessionActivity.from(hookEvent: "SubagentStop"), .thinking)
         // The whole session closing is "done".
@@ -54,10 +55,10 @@ final class SessionActivityTests: XCTestCase {
     }
 
     func testToolNameIgnoredForNonPreToolUseEvents() {
-        // A tool name on Stop shouldn't change the meaning of Stop.
+        // A tool name on Stop shouldn't change the meaning of Stop (done).
         XCTAssertEqual(
             SessionActivity.from(hookEvent: "Stop", toolName: "AskUserQuestion"),
-            .waiting)
+            .idle)
         XCTAssertEqual(
             SessionActivity.from(hookEvent: "PostToolUse", toolName: "AskUserQuestion"),
             .thinking)
@@ -264,5 +265,51 @@ final class WindowActivatorTests: XCTestCase {
         // "/a/proj-2" must NOT match workspace "/a/proj".
         let locks = [IDELock(pid: 1, workspaceFolders: ["/a/proj"], ideName: "X")]
         XCTAssertNil(WindowActivator.bestWorkspace(for: "/a/proj-2", in: locks))
+    }
+}
+
+final class WindowFocuserTests: XCTestCase {
+    func testExactFolderSegmentScoresHighest() {
+        // VS Code titles join parts with an em dash.
+        XCTAssertEqual(
+            WindowFocuser.matchScore(
+                title: "Models.swift — claude-companion — Workspace",
+                workspaceFolder: "/Users/me/claude-companion"),
+            2)
+    }
+
+    func testTitleEqualToFolderNameMatches() {
+        // No editor open: VS Code shows just the root name.
+        XCTAssertEqual(
+            WindowFocuser.matchScore(
+                title: "claude-companion",
+                workspaceFolder: "/Users/me/claude-companion"),
+            2)
+    }
+
+    func testSubstringOnlyScoresLower() {
+        // A different window whose name merely contains the folder name.
+        XCTAssertEqual(
+            WindowFocuser.matchScore(
+                title: "readme — claude-companion-tools",
+                workspaceFolder: "/Users/me/claude-companion"),
+            1)
+    }
+
+    func testNoMatchScoresZero() {
+        XCTAssertEqual(
+            WindowFocuser.matchScore(
+                title: "index.js — da-live",
+                workspaceFolder: "/Users/me/claude-companion"),
+            0)
+    }
+
+    func testExactSegmentBeatsSubstringWhenChoosing() {
+        // The real window (exact segment) must outrank a look-alike (substring),
+        // so the correct window is chosen when several are similar.
+        let folder = "/Users/me/da-live"
+        let real = WindowFocuser.matchScore(title: "app.js — da-live", workspaceFolder: folder)
+        let lookalike = WindowFocuser.matchScore(title: "x — da-live-tools", workspaceFolder: folder)
+        XCTAssertGreaterThan(real, lookalike)
     }
 }
