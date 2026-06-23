@@ -1,0 +1,72 @@
+<svg width="1280" height="640" viewBox="0 0 1280 640" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2a2440"/>
+      <stop offset="1" stop-color="#15131f"/>
+    </linearGradient>
+    <linearGradient id="pop" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#34323a"/>
+      <stop offset="1" stop-color="#2a282f"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="14" stdDeviation="24" flood-color="#000" flood-opacity="0.5"/>
+    </filter>
+    <style>
+      text { font-family: -apple-system, "SF Pro Text", "Helvetica Neue", Arial, sans-serif; }
+      .title { font-size: 58px; font-weight: 700; fill: #ffffff; }
+      .tag   { font-size: 24px; font-weight: 400; fill: #b9b4d0; }
+      .chip  { font-size: 21px; font-weight: 500; fill: #e9e7f0; }
+      .menuhdr { font-size: 14px; font-weight: 600; fill: #8e8b97; letter-spacing: 0.5px; }
+      .item  { font-size: 15px; font-weight: 500; fill: #f2f1f5; }
+      .ep    { font-size: 15px; font-weight: 400; fill: #8e8b97; }
+      .note  { font-size: 13px; font-weight: 400; fill: #6f6c78; font-style: italic; }
+    </style>
+  </defs>
+
+  <rect width="1280" height="640" fill="url(#bg)"/>
+
+  <!-- left column -->
+  <text x="80" y="210" class="title">Claude Companion</text>
+  <text x="82" y="256" class="tag">A menu bar control center for your</text>
+  <text x="82" y="290" class="tag">Claude Code sessions.</text>
+
+  <g transform="translate(86,360)">
+    <circle cx="9" cy="-6" r="9" fill="#ff9f0a"/><text x="28" y="0" class="chip">See who's waiting for you</text>
+  </g>
+  <g transform="translate(86,404)">
+    <circle cx="9" cy="-6" r="9" fill="#0a84ff"/><text x="28" y="0" class="chip">Watch what's working</text>
+  </g>
+  <g transform="translate(86,448)">
+    <circle cx="9" cy="-6" r="9" fill="#30d158"/><text x="28" y="0" class="chip">Jump straight to the window</text>
+  </g>
+
+  <!-- popover on the right -->
+  <g filter="url(#shadow)">
+    <rect x="760" y="150" width="440" height="340" rx="16" fill="url(#pop)" stroke="#ffffff" stroke-opacity="0.08"/>
+  </g>
+
+  <text x="786" y="186" class="menuhdr">CLAUDE — 3 SESSIONS</text>
+  <line x1="780" y1="202" x2="1180" y2="202" stroke="#ffffff" stroke-opacity="0.08"/>
+
+  <g transform="translate(790,230)">
+    <circle cx="10" cy="-5" r="10" fill="#ff9f0a"/>
+    <rect x="8.4" y="-10" width="3.2" height="7" rx="1.6" fill="#fff"/><circle cx="10" cy="0.4" r="1.8" fill="#fff"/>
+    <text x="32" y="0" class="item">Fix RUM 500 <tspan class="ep">·  VS Code</tspan></text>
+  </g>
+  <g transform="translate(790,274)">
+    <circle cx="10" cy="-5" r="10" fill="#0a84ff"/>
+    <path d="M 3.5 -5 A 6.5 6.5 0 1 1 14.5 -1.4" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
+    <path d="M 14.5 -1.4 l 3.3 -0.7 l -0.7 3.3 z" fill="#fff"/>
+    <text x="32" y="0" class="item">macOS Claude companion app <tspan class="ep">·  Desktop</tspan></text>
+  </g>
+  <g transform="translate(790,318)">
+    <circle cx="10" cy="-5" r="10" fill="#30d158"/>
+    <path d="M 5.5 -5 l 3 3 l 5.6 -6.4" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="32" y="0" class="item">da-live unit tests <tspan class="ep">·  Terminal</tspan></text>
+  </g>
+
+  <line x1="780" y1="346" x2="1180" y2="346" stroke="#ffffff" stroke-opacity="0.08"/>
+  <text x="790" y="374" class="note">21 older sessions hidden (no activity since launch)</text>
+  <line x1="780" y1="396" x2="1180" y2="396" stroke="#ffffff" stroke-opacity="0.08"/>
+  <text x="790" y="426" class="item" style="font-weight:400">Quit Claude Companion</text>
+</svg>
