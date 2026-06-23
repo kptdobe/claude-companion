@@ -25,6 +25,15 @@ try:
 except Exception:
     payload = {}
 session_id = payload.get("session_id") or "unknown"
+
+# Tools that block waiting for the user. A PreToolUse for one of these means
+# Claude is waiting on you, not working. Keep in sync with SessionActivity
+# .blockingTools in the Swift sources.
+BLOCKING_TOOLS = {"AskUserQuestion", "ExitPlanMode"}
+if payload.get("hook_event_name") == "PreToolUse" \
+        and payload.get("tool_name") in BLOCKING_TOOLS:
+    state = "waiting"
+
 record = {
     "sessionId": session_id,
     "state": state,

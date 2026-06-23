@@ -24,12 +24,43 @@ final class SessionActivityTests: XCTestCase {
         XCTAssertEqual(SessionActivity.from(hookEvent: "PreToolUse"), .thinking)
         XCTAssertEqual(SessionActivity.from(hookEvent: "PostToolUse"), .thinking)
         XCTAssertEqual(SessionActivity.from(hookEvent: "Notification"), .waiting)
-        XCTAssertEqual(SessionActivity.from(hookEvent: "Stop"), .idle)
-        XCTAssertEqual(SessionActivity.from(hookEvent: "SubagentStop"), .idle)
+        // Stop = the turn ended and Claude now needs you — that's the attention state.
+        XCTAssertEqual(SessionActivity.from(hookEvent: "Stop"), .waiting)
+        // A subagent finishing doesn't end the main turn — Claude keeps working.
+        XCTAssertEqual(SessionActivity.from(hookEvent: "SubagentStop"), .thinking)
+        // The whole session closing is "done".
+        XCTAssertEqual(SessionActivity.from(hookEvent: "SessionEnd"), .idle)
     }
 
     func testUnknownEventIsUnknown() {
         XCTAssertEqual(SessionActivity.from(hookEvent: "MadeUpEvent"), .unknown)
+    }
+
+    func testBlockingToolPreUseIsWaiting() {
+        // AskUserQuestion / ExitPlanMode block for the user's answer — even
+        // though they arrive as a PreToolUse (which is normally "thinking").
+        XCTAssertEqual(
+            SessionActivity.from(hookEvent: "PreToolUse", toolName: "AskUserQuestion"),
+            .waiting)
+        XCTAssertEqual(
+            SessionActivity.from(hookEvent: "PreToolUse", toolName: "ExitPlanMode"),
+            .waiting)
+    }
+
+    func testNonBlockingToolPreUseIsThinking() {
+        XCTAssertEqual(
+            SessionActivity.from(hookEvent: "PreToolUse", toolName: "Bash"),
+            .thinking)
+    }
+
+    func testToolNameIgnoredForNonPreToolUseEvents() {
+        // A tool name on Stop shouldn't change the meaning of Stop.
+        XCTAssertEqual(
+            SessionActivity.from(hookEvent: "Stop", toolName: "AskUserQuestion"),
+            .waiting)
+        XCTAssertEqual(
+            SessionActivity.from(hookEvent: "PostToolUse", toolName: "AskUserQuestion"),
+            .thinking)
     }
 
     func testSortRankPrioritisesAttention() {
@@ -97,7 +128,8 @@ final class SessionMergerTests: XCTestCase {
         let records = [record("a", pid: 1), record("b", pid: 2)]
         let states = ["a": state("a", "thinking", ts: 10)]
         let merged = SessionMerger.merge(
-            records: records, states: states, isAlive: { _ in true })
+            records: records, states: states, isAlive: { _ in true },
+            now: Date(timeIntervalSince1970: 60))
         let byId = Dictionary(uniqueKeysWithValues: merged.map { ($0.id, $0) })
         XCTAssertEqual(byId["a"]?.activity, .thinking)
         XCTAssertEqual(byId["b"]?.activity, .unknown)
@@ -113,8 +145,34 @@ final class SessionMergerTests: XCTestCase {
             "thinking": state("thinking", "thinking", ts: 10),
         ]
         let merged = SessionMerger.merge(
-            records: records, states: states, isAlive: { _ in true })
+            records: records, states: states, isAlive: { _ in true },
+            now: Date(timeIntervalSince1970: 60))
         XCTAssertEqual(merged.map(\.id), ["waiting", "thinking", "idle"])
+    }
+
+    func testStaleThinkingIsDemotedAndHidden() {
+        // The reported bug: one session is waiting on the user while another
+        // crashed mid-tool 15h ago and is stuck "thinking" — keeping the icon
+        // spinning blue. The stale one must be demoted so it neither spins the
+        // icon nor clutters the list.
+        let now = Date(timeIntervalSince1970: 100_000)
+        let records = [record("waiting", pid: 1), record("zombie", pid: 2),
+                       record("fresh", pid: 3)]
+        let states = [
+            "waiting": state("waiting", "waiting", ts: now.timeIntervalSince1970 - 5),
+            "zombie": state("zombie", "thinking", ts: now.timeIntervalSince1970 - 3600),
+            "fresh": state("fresh", "thinking", ts: now.timeIntervalSince1970 - 5),
+        ]
+        let merged = SessionMerger.merge(
+            records: records, states: states, isAlive: { _ in true },
+            now: now, thinkingTimeout: 600)
+        let byId = Dictionary(uniqueKeysWithValues: merged.map { ($0.id, $0) })
+        XCTAssertEqual(byId["zombie"]?.activity, .unknown, "stale thinking demoted")
+        XCTAssertEqual(byId["fresh"]?.activity, .thinking, "recent thinking preserved")
+        XCTAssertEqual(byId["waiting"]?.activity, .waiting)
+        // Only the genuinely-active 'fresh' should spin the icon, not the zombie.
+        XCTAssertEqual(SessionMerger.active(merged).map { $0.id }.sorted(),
+                       ["fresh", "waiting"], "zombie hidden")
     }
 
     func testActiveDropsUnknownSessions() {
@@ -136,7 +194,8 @@ final class SessionMergerTests: XCTestCase {
             "c": state("c", "waiting", ts: 1),
         ]
         let merged = SessionMerger.merge(
-            records: records, states: states, isAlive: { _ in true })
+            records: records, states: states, isAlive: { _ in true },
+            now: Date(timeIntervalSince1970: 60))
         XCTAssertTrue(SessionMerger.anyThinking(merged))
         XCTAssertEqual(SessionMerger.waitingCount(merged), 2)
     }

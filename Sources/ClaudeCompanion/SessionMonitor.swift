@@ -9,17 +9,21 @@ enum SessionMerger {
     ///   - states: hook state keyed by sessionId.
     ///   - isAlive: returns true if a pid is still running.
     ///   - now: current time (injectable for tests).
+    ///   - thinkingTimeout: a `thinking` state with no update for longer than
+    ///     this is treated as stale (crashed/orphaned turn) and demoted to
+    ///     `.unknown`, so it stops spinning the icon and drops out of the list.
     static func merge(
         records: [SessionRecord],
         states: [String: StateRecord],
         isAlive: (Int) -> Bool,
-        now: Date = Date()
+        now: Date = Date(),
+        thinkingTimeout: TimeInterval = 600
     ) -> [Session] {
         var sessions: [Session] = []
 
         for record in records where isAlive(record.pid) {
             let state = states[record.sessionId]
-            let activity = state?.activity ?? .unknown
+            var activity = state?.activity ?? .unknown
 
             let last: Date
             if let ts = state?.ts {
@@ -28,6 +32,11 @@ enum SessionMerger {
                 last = Date(timeIntervalSince1970: started / 1000.0)
             } else {
                 last = now
+            }
+
+            // Demote a "thinking" state that has gone quiet for too long.
+            if activity == .thinking, now.timeIntervalSince(last) > thinkingTimeout {
+                activity = .unknown
             }
 
             sessions.append(Session(

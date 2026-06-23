@@ -26,9 +26,11 @@ const EVENT_STATE = {
   PreToolUse: 'thinking',
   PostToolUse: 'thinking',
   PreCompact: 'thinking',
+  // A subagent finishing doesn't end the main turn — keep it "thinking".
+  SubagentStop: 'thinking',
   Notification: 'waiting',
-  Stop: 'idle',
-  SubagentStop: 'idle',
+  // `Stop` = the turn ended and Claude needs you. This is the attention state.
+  Stop: 'waiting',
   SessionEnd: 'idle',
 };
 const MATCHER_EVENTS = new Set(['PreToolUse', 'PostToolUse', 'PreCompact']);

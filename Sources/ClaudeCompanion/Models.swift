@@ -46,15 +46,34 @@ enum SessionActivity: String, Codable {
         }
     }
 
+    /// Tools that block waiting for the user's response. A `PreToolUse` for one
+    /// of these means Claude is now waiting on you, not working.
+    /// Kept in sync with the `BLOCKING_TOOLS` set in `claude-companion-hook`.
+    static let blockingTools: Set<String> = ["AskUserQuestion", "ExitPlanMode"]
+
+    /// Tool-aware mapping. A `PreToolUse` for a blocking tool is `.waiting`;
+    /// otherwise this defers to the event-only mapping.
+    static func from(hookEvent: String, toolName: String?) -> SessionActivity {
+        if hookEvent == "PreToolUse", let tool = toolName, blockingTools.contains(tool) {
+            return .waiting
+        }
+        return from(hookEvent: hookEvent)
+    }
+
     /// Maps a Claude Code hook event name to the activity it implies.
-    /// This is the single source of truth shared (in spirit) with the hook script.
+    /// Kept in sync with the installer's event→state map (`install-hooks.mjs`).
     static func from(hookEvent: String) -> SessionActivity {
         switch hookEvent {
-        case "UserPromptSubmit", "PreToolUse", "PostToolUse", "PreCompact":
+        // Actively working. A subagent stopping does NOT end the main turn,
+        // so the main loop keeps thinking.
+        case "UserPromptSubmit", "PreToolUse", "PostToolUse", "PreCompact", "SubagentStop":
             return .thinking
-        case "Notification":
+        // Needs you: a permission/idle notification, OR the turn just ended —
+        // in Claude Code, `Stop` is precisely when it's your move again.
+        case "Notification", "Stop":
             return .waiting
-        case "Stop", "SubagentStop", "SessionEnd":
+        // The whole session has closed.
+        case "SessionEnd":
             return .idle
         default:
             return .unknown
