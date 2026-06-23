@@ -12,12 +12,17 @@ enum SessionMerger {
     ///   - thinkingTimeout: a `thinking` state with no update for longer than
     ///     this is treated as stale (crashed/orphaned turn) and demoted to
     ///     `.unknown`, so it stops spinning the icon and drops out of the list.
+    ///   - pendingToolTimeout: a `PreToolUse` (tool about to run) with no
+    ///     completion for longer than this is almost certainly blocked on a
+    ///     permission prompt — there is no `Notification` hook for that — so it
+    ///     is promoted to `.waiting`.
     static func merge(
         records: [SessionRecord],
         states: [String: StateRecord],
         isAlive: (Int) -> Bool,
         now: Date = Date(),
-        thinkingTimeout: TimeInterval = 600
+        thinkingTimeout: TimeInterval = 600,
+        pendingToolTimeout: TimeInterval = 15
     ) -> [Session] {
         var sessions: [Session] = []
 
@@ -34,9 +39,21 @@ enum SessionMerger {
                 last = now
             }
 
-            // Demote a "thinking" state that has gone quiet for too long.
-            if activity == .thinking, now.timeIntervalSince(last) > thinkingTimeout {
-                activity = .unknown
+            // Re-interpret a "thinking" state by how long it's been quiet and
+            // what it was doing when it went quiet:
+            //  - a tool pending (PreToolUse) with no completion past the
+            //    auto-approval window is blocked on a permission prompt (no
+            //    Notification hook fires for those) → .waiting, and it STAYS
+            //    waiting however long, so you don't forget it after stepping away;
+            //  - non-tool "thinking" (a generation that went silent) for very
+            //    long is a crashed/orphaned turn → hide (.unknown).
+            if activity == .thinking {
+                let quiet = now.timeIntervalSince(last)
+                if state?.event == "PreToolUse", quiet > pendingToolTimeout {
+                    activity = .waiting
+                } else if quiet > thinkingTimeout {
+                    activity = .unknown
+                }
             }
 
             sessions.append(Session(

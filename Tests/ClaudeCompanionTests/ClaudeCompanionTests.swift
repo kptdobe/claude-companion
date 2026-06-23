@@ -37,6 +37,16 @@ final class SessionActivityTests: XCTestCase {
         XCTAssertEqual(SessionActivity.from(hookEvent: "MadeUpEvent"), .unknown)
     }
 
+    func testLooksLikeQuestionFlagsClosingQuestions() {
+        XCTAssertTrue(SessionActivity.looksLikeQuestion("Want me to ship it?"))
+        // A question with a trailing default still counts.
+        XCTAssertTrue(SessionActivity.looksLikeQuestion(
+            "Keep 15s or go longer? I'll use 15s otherwise."))
+        // Plain "done" reports are not questions.
+        XCTAssertFalse(SessionActivity.looksLikeQuestion("Done. Shipped v0.1.3."))
+        XCTAssertFalse(SessionActivity.looksLikeQuestion("All 33 tests pass."))
+    }
+
     func testBlockingToolPreUseIsWaiting() {
         // AskUserQuestion / ExitPlanMode block for the user's answer — even
         // though they arrive as a PreToolUse (which is normally "thinking").
@@ -114,8 +124,9 @@ final class SessionMergerTests: XCTestCase {
         SessionRecord(pid: pid, sessionId: id, cwd: cwd, startedAt: 1_000_000,
                       version: nil, kind: nil, entrypoint: entrypoint)
     }
-    private func state(_ id: String, _ s: String, ts: Double) -> StateRecord {
-        StateRecord(sessionId: id, state: s, event: nil, cwd: nil, ts: ts)
+    private func state(_ id: String, _ s: String, ts: Double,
+                       event: String? = nil) -> StateRecord {
+        StateRecord(sessionId: id, state: s, event: event, cwd: nil, ts: ts)
     }
 
     func testDeadProcessesAreDropped() {
@@ -161,7 +172,9 @@ final class SessionMergerTests: XCTestCase {
                        record("fresh", pid: 3)]
         let states = [
             "waiting": state("waiting", "waiting", ts: now.timeIntervalSince1970 - 5),
-            "zombie": state("zombie", "thinking", ts: now.timeIntervalSince1970 - 3600),
+            // crashed mid-generation (not a pending tool) → should be hidden
+            "zombie": state("zombie", "thinking",
+                            ts: now.timeIntervalSince1970 - 3600, event: "UserPromptSubmit"),
             "fresh": state("fresh", "thinking", ts: now.timeIntervalSince1970 - 5),
         ]
         let merged = SessionMerger.merge(
@@ -174,6 +187,45 @@ final class SessionMergerTests: XCTestCase {
         // Only the genuinely-active 'fresh' should spin the icon, not the zombie.
         XCTAssertEqual(SessionMerger.active(merged).map { $0.id }.sorted(),
                        ["fresh", "waiting"], "zombie hidden")
+    }
+
+    func testPendingToolPromptBecomesWaiting() {
+        // No Notification hook fires for permission prompts, so a tool stuck on
+        // PreToolUse (not completed) for a while means Claude is blocked on you.
+        let now = Date(timeIntervalSince1970: 100_000)
+        let records = [record("quick", pid: 1), record("blocked", pid: 2),
+                       record("generating", pid: 3)]
+        let states = [
+            // tool just started — still legitimately working
+            "quick": state("quick", "thinking",
+                           ts: now.timeIntervalSince1970 - 3, event: "PreToolUse"),
+            // tool pending 30s with no PostToolUse — a permission prompt
+            "blocked": state("blocked", "thinking",
+                             ts: now.timeIntervalSince1970 - 30, event: "PreToolUse"),
+            // long response generation is NOT a pending tool — keep working
+            "generating": state("generating", "thinking",
+                                ts: now.timeIntervalSince1970 - 30, event: "UserPromptSubmit"),
+        ]
+        let merged = SessionMerger.merge(
+            records: records, states: states, isAlive: { _ in true },
+            now: now, thinkingTimeout: 600, pendingToolTimeout: 15)
+        let byId = Dictionary(uniqueKeysWithValues: merged.map { ($0.id, $0) })
+        XCTAssertEqual(byId["quick"]?.activity, .thinking)
+        XCTAssertEqual(byId["blocked"]?.activity, .waiting, "pending tool → permission prompt")
+        XCTAssertEqual(byId["generating"]?.activity, .thinking, "generation is not a pending tool")
+    }
+
+    func testLongPendingToolStaysWaiting() {
+        // A permission prompt you walked away from must NOT be hidden — that's
+        // the whole point of the app. A pending tool stays waiting however long.
+        let now = Date(timeIntervalSince1970: 100_000)
+        let records = [record("away", pid: 1)]
+        let states = ["away": state("away", "thinking",
+                                    ts: now.timeIntervalSince1970 - 7200, event: "PreToolUse")]
+        let merged = SessionMerger.merge(
+            records: records, states: states, isAlive: { _ in true },
+            now: now, thinkingTimeout: 600, pendingToolTimeout: 15)
+        XCTAssertEqual(merged.first?.activity, .waiting)
     }
 
     func testActiveDropsUnknownSessions() {

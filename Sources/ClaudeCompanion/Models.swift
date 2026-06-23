@@ -51,6 +51,13 @@ enum SessionActivity: String, Codable {
     /// Kept in sync with the `BLOCKING_TOOLS` set in `claude-companion-hook`.
     static let blockingTools: Set<String> = ["AskUserQuestion", "ExitPlanMode"]
 
+    /// Heuristic mirrored in the `Stop` branch of `claude-companion-hook`: a
+    /// turn whose closing message asks the user something is waiting on you
+    /// (orange), versus a plain "done" report (green).
+    static func looksLikeQuestion(_ text: String) -> Bool {
+        text.contains("?")
+    }
+
     /// Tool-aware mapping. A `PreToolUse` for a blocking tool is `.waiting`;
     /// otherwise this defers to the event-only mapping.
     static func from(hookEvent: String, toolName: String?) -> SessionActivity {
