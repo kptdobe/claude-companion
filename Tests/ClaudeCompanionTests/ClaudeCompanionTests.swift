@@ -294,6 +294,74 @@ final class TranscriptTitleTests: XCTestCase {
         session.customTitle = "Fix RUM 500"
         XCTAssertEqual(session.title, "Fix RUM 500")
     }
+
+    func testSessionTitleLeadsWithIssueKeyForPaperclip() {
+        // A Paperclip session's cwd is a workspace UUID — never show that.
+        var session = Session(
+            id: "x", pid: 1,
+            cwd: "/Users/me/.paperclip/instances/default/workspaces/69379141-4656-4096",
+            entrypoint: .sdk, activity: .thinking, lastActivity: Date())
+        // No title yet: show the issue key, not the UUID.
+        session.issueKey = "COR-61"
+        XCTAssertEqual(session.title, "COR-61")
+        // With a title: lead with the key, then the summary.
+        session.customTitle = "Investigate writeAuditEntry shard convergence failures"
+        XCTAssertEqual(session.title,
+                       "COR-61  ·  Investigate writeAuditEntry shard convergence failures")
+    }
+}
+
+final class TranscriptInfoTests: XCTestCase {
+    func testExtractInfoReturnsTitleAndIssueKey() {
+        let jsonl = """
+        {"type":"ai-title","aiTitle":"Investigate shard convergence","sessionId":"x"}
+        {"type":"user","message":{"content":"## Paperclip Wake Payload\\n- issue: COR-61 writeAuditEntry shard"}}
+        """.data(using: .utf8)!
+        let info = TranscriptTitle.extractInfo(fromTranscript: jsonl)
+        XCTAssertEqual(info.title, "Investigate shard convergence")
+        XCTAssertEqual(info.issueKey, "COR-61")
+    }
+
+    func testExtractInfoNonPaperclipHasNoIssueKey() {
+        let jsonl = """
+        {"type":"ai-title","aiTitle":"Fix the bug","sessionId":"x"}
+        """.data(using: .utf8)!
+        let info = TranscriptTitle.extractInfo(fromTranscript: jsonl)
+        XCTAssertEqual(info.title, "Fix the bug")
+        XCTAssertNil(info.issueKey)
+    }
+}
+
+final class PaperclipTests: XCTestCase {
+    func testIssueKeyFromWakePayload() {
+        let transcript = """
+        {"type":"user","message":{"content":"## Paperclip Wake Payload\\n- issue: COR-95 da-content `memory limit` — stream body"}}
+        """
+        XCTAssertEqual(Paperclip.issueKey(fromTranscript: transcript), "COR-95")
+    }
+
+    func testIssueKeyUsesMostRecentWake() {
+        // Two heartbeats; the latest issue is the current one.
+        let transcript = """
+        - issue: COR-94 da-live `first task`
+        ...later heartbeat...
+        - issue: COR-95 da-content `second task`
+        """
+        XCTAssertEqual(Paperclip.issueKey(fromTranscript: transcript), "COR-95")
+    }
+
+    func testNonPaperclipTranscriptHasNoIssueKey() {
+        XCTAssertNil(Paperclip.issueKey(fromTranscript: "just a normal session, no wake here"))
+    }
+
+    func testIssueURLBuildsFromKeyPrefix() {
+        XCTAssertEqual(
+            Paperclip.issueURL(forKey: "COR-95")?.absoluteString,
+            "http://localhost:3100/COR/issues/COR-95")
+        XCTAssertEqual(
+            Paperclip.issueURL(forKey: "ABC-12", baseURL: "http://localhost:4000")?.absoluteString,
+            "http://localhost:4000/ABC/issues/ABC-12")
+    }
 }
 
 final class WindowActivatorTests: XCTestCase {

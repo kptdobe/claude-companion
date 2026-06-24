@@ -13,8 +13,10 @@ Terminal CLI, the VS Code extension, and the Claude Desktop app.
   - 🔵 **Working** — Claude is generating / running tools
   - 🟠 **Waiting for you** — a permission prompt or notification
   - 🟢 **Done** — finished its turn, awaiting your next prompt
-- **Click a session** to jump straight to its window (VS Code window, terminal
-  tab, or Claude Desktop).
+- **Click a session** to jump straight to where it lives:
+  - the right **VS Code window**, **terminal tab**, or **Claude Desktop**, and
+  - for **PaperclipAI** sessions (`sdk-cli`, driven in the browser), the correct
+    **Chrome tab** for the issue — e.g. `localhost:3100/COR/issues/COR-95`.
 
 ## How it works
 
@@ -76,6 +78,11 @@ Accessibility** (enable **Claude Companion**), then click the session again.
 
 - Terminal/iTerm tab targeting additionally uses **Automation** (to read the
   controlling TTY), which prompts separately.
+- PaperclipAI → Chrome tab jumping uses **Automation → Google Chrome** (to find
+  the tab) plus **Accessibility** (to post the ⌘-number shortcut that actually
+  switches the tab — Chrome ignores the AppleScript "active tab" setter on recent
+  macOS). Note: ⌘1–⌘8 reach tabs 1–8 and ⌘9 the last tab, so a target beyond the
+  8th tab (and not last) is foregrounded but not switched.
 - If you previously ran an ad-hoc build, remove any stale **Claude Companion**
   entries from the Accessibility list first, then grant the signed build once.
 
@@ -95,6 +102,7 @@ swift build
 | `Sources/ClaudeCompanion/StatusItemController.swift` | menu bar icon (animated) + session menu |
 | `Sources/ClaudeCompanion/WindowActivator.swift` | jump-to-window per entrypoint |
 | `Sources/ClaudeCompanion/WindowFocuser.swift` | native Accessibility-API window raising + title matching |
+| `Sources/ClaudeCompanion/Paperclip.swift` | PaperclipAI issue-key extraction + issue URL building |
 | `scripts/claude-companion-hook` | per-event state writer (runs inside Claude Code) |
 | `scripts/install-hooks.mjs` | wires the hooks into `settings.json` (dry-run by default) |
 | `scripts/setup-signing.sh` | one-time stable self-signed code-signing identity |

@@ -18,9 +18,126 @@ enum WindowActivator {
             activateVSCode(for: session, ideLocks: ideLocks)
         case .cli:
             activateTerminal(for: session)
-        case .sdk, .unknown:
-            // Headless or unknown — nothing focusable; just surface Claude.app.
+        case .sdk:
+            activateSDK(for: session)
+        case .unknown:
+            // Nothing focusable — surface Claude.app.
             activateApp(named: "Claude")
+        }
+    }
+
+    // MARK: - SDK / PaperclipAI (browser)
+
+    /// An `sdk-cli` session driven by PaperclipAI lives in a browser tab. Find
+    /// its issue from the transcript and focus the matching Chrome tab; fall
+    /// back to Claude.app if it's not a Paperclip session.
+    private static func activateSDK(for session: Session) {
+        let store = TranscriptTitleStore()
+        guard let key = store.paperclipIssueKey(for: session.id, cwd: session.cwd) else {
+            activateApp(named: "Claude")
+            return
+        }
+        jumpToPaperclipIssue(key: key)
+    }
+
+    /// Focus the Chrome tab for a Paperclip issue key.
+    private static func jumpToPaperclipIssue(key: String) {
+        guard let url = Paperclip.issueURL(forKey: key) else { return }
+        focusChromeTab(matching: "/issues/\(key)", fallbackURL: url)
+    }
+
+    /// Focus the Chrome tab whose URL contains `needle`; open `fallbackURL` if
+    /// it isn't open. Chrome ignores `set active tab index` *visually* on recent
+    /// macOS, so we switch tabs with the ⌘-number keyboard shortcut instead.
+    private static func focusChromeTab(matching needle: String, fallbackURL: URL) {
+        let chromeRunning = NSWorkspace.shared.runningApplications
+            .contains { $0.bundleIdentifier == "com.google.Chrome" }
+        guard chromeRunning else {
+            NSWorkspace.shared.open(fallbackURL)
+            return
+        }
+        let needleEsc = needle.replacingOccurrences(of: "\"", with: "")
+        // Locate the tab + raise its window. Returns "<tabIndex> <tabCount>"
+        // (tabIndex 0 = not found).
+        let find = """
+        tell application "Google Chrome"
+            set mWin to 0
+            set mTab to 0
+            set tc to 0
+            repeat with wi from 1 to (count of windows)
+                set w to window wi
+                set n to (count of tabs of w)
+                repeat with ti from 1 to n
+                    if (URL of tab ti of w) contains "\(needleEsc)" then
+                        set mWin to wi
+                        set mTab to ti
+                        set tc to n
+                        exit repeat
+                    end if
+                end repeat
+                if mTab > 0 then exit repeat
+            end repeat
+            if mWin > 0 then set index of window mWin to 1
+            return (mTab as text) & " " & (tc as text)
+        end tell
+        """
+        let (out, _, _) = runAppleScript(find)
+        let nums = (out ?? "").split(separator: " ").compactMap { Int($0) }
+        let tabIndex = nums.first ?? 0
+        let tabCount = nums.count > 1 ? nums[1] : 0
+
+        guard tabIndex > 0 else {            // not open → open it in a new tab
+            NSWorkspace.shared.open(fallbackURL)
+            return
+        }
+
+        // ⌘1–⌘8 select tabs 1–8; ⌘9 selects the LAST tab.
+        let digit: Int? = tabIndex <= 8 ? tabIndex : (tabIndex == tabCount ? 9 : nil)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            _ = shell("/usr/bin/open", ["-a", "Google Chrome"])
+            guard let digit else { return }
+            // After Chrome is frontmost, post the ⌘-number shortcut natively.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                pressCommandDigit(digit)
+            }
+        }
+    }
+
+    /// Post ⌘+<digit> to the frontmost app via CGEvent (needs Accessibility,
+    /// which the app already has). This actually switches the visible tab.
+    private static func pressCommandDigit(_ digit: Int) {
+        // US keyboard virtual keycodes for the number row.
+        let keycodes: [Int: CGKeyCode] = [1: 18, 2: 19, 3: 20, 4: 21, 5: 23,
+                                          6: 22, 7: 26, 8: 28, 9: 25]
+        guard let key = keycodes[digit] else { return }
+        let source = CGEventSource(stateID: .combinedSessionState)
+        let down = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: true)
+        down?.flags = .maskCommand
+        let up = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: false)
+        up?.flags = .maskCommand
+        down?.post(tap: .cghidEventTap)
+        up?.post(tap: .cghidEventTap)
+    }
+
+    /// Run AppleScript, capturing stdout, stderr, and exit status.
+    private static func runAppleScript(_ script: String) -> (out: String?, err: String?, status: Int32) {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        task.arguments = ["-e", script]
+        let outPipe = Pipe(), errPipe = Pipe()
+        task.standardOutput = outPipe
+        task.standardError = errPipe
+        do {
+            try task.run()
+            let o = outPipe.fileHandleForReading.readDataToEndOfFile()
+            let e = errPipe.fileHandleForReading.readDataToEndOfFile()
+            task.waitUntilExit()
+            return (String(data: o, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                    String(data: e, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                    task.terminationStatus)
+        } catch {
+            return (nil, "\(error)", -1)
         }
     }
 

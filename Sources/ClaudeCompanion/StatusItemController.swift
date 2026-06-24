@@ -68,7 +68,9 @@ final class StatusItemController: NSObject {
             menu.addItem(empty)
         } else {
             for var session in active {
-                session.customTitle = titles.title(for: session.id, cwd: session.cwd)
+                let info = titles.info(for: session.id, cwd: session.cwd)
+                session.customTitle = info.title
+                session.issueKey = info.issueKey
                 menu.addItem(sessionItem(session))
             }
         }

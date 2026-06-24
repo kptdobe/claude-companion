@@ -143,10 +143,18 @@ struct Session: Identifiable, Equatable {
     var lastActivity: Date
     /// Title from the transcript (custom or AI), if resolved.
     var customTitle: String?
+    /// PaperclipAI issue key (e.g. "COR-95") when this is a Paperclip session.
+    var issueKey: String?
 
-    /// A human label: prefer the transcript title, else the directory name.
+    /// A human label: lead with the Paperclip issue key when present (so
+    /// browser-driven sessions don't show a workspace UUID), else the
+    /// transcript title, else the directory name.
     var title: String {
-        if let custom = customTitle, !custom.isEmpty { return custom }
+        let summary = (customTitle?.isEmpty == false) ? customTitle : nil
+        if let key = issueKey, !key.isEmpty {
+            return summary.map { "\(key)  ·  \($0)" } ?? key
+        }
+        if let summary { return summary }
         let name = (cwd as NSString).lastPathComponent
         return name.isEmpty ? cwd : name
     }

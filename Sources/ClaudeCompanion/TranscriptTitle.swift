@@ -7,9 +7,19 @@ import Foundation
 ///   {"type":"ai-title","aiTitle":"Build macOS Claude companion control center", ...}
 /// A user-set custom title wins; otherwise the AI-generated title is used.
 enum TranscriptTitle {
+    /// Title + Paperclip issue key in a single read.
+    static func extractInfo(fromTranscript data: Data) -> (title: String?, issueKey: String?) {
+        guard let text = String(data: data, encoding: .utf8) else { return (nil, nil) }
+        return (extractTitle(fromText: text), Paperclip.issueKey(fromTranscript: text))
+    }
+
     /// Pure scan over transcript bytes — no I/O, so it's unit-testable.
     static func extract(fromTranscript data: Data) -> String? {
         guard let text = String(data: data, encoding: .utf8) else { return nil }
+        return extractTitle(fromText: text)
+    }
+
+    private static func extractTitle(fromText text: String) -> String? {
         var custom: String?
         var ai: String?
         text.enumerateLines { line, _ in
@@ -37,25 +47,35 @@ enum TranscriptTitle {
 final class TranscriptTitleStore {
     private let projectsDir: URL
     private var locationCache: [String: URL] = [:]
-    private var titleCache: [String: (mtime: Date, title: String?)] = [:]
+    private var infoCache: [String: (mtime: Date, title: String?, issueKey: String?)] = [:]
 
     init(claudeDir: URL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".claude")) {
         self.projectsDir = claudeDir.appendingPathComponent("projects")
     }
 
-    func title(for sessionId: String, cwd: String) -> String? {
-        // A found title never changes for our purposes — short-circuit.
-        if let cached = titleCache[sessionId], cached.title != nil { return cached.title }
-
-        guard let url = locate(sessionId: sessionId, cwd: cwd) else { return nil }
+    /// Title + Paperclip issue key for a session, re-read only when the
+    /// transcript's modification time changes.
+    func info(for sessionId: String, cwd: String) -> (title: String?, issueKey: String?) {
+        guard let url = locate(sessionId: sessionId, cwd: cwd) else { return (nil, nil) }
         let mtime = (try? url.resourceValues(forKeys: [.contentModificationDateKey])
             .contentModificationDate) ?? .distantPast
-        if let cached = titleCache[sessionId], cached.mtime == mtime { return cached.title }
+        if let cached = infoCache[sessionId], cached.mtime == mtime {
+            return (cached.title, cached.issueKey)
+        }
+        let info: (title: String?, issueKey: String?) =
+            (try? Data(contentsOf: url)).map(TranscriptTitle.extractInfo) ?? (title: nil, issueKey: nil)
+        infoCache[sessionId] = (mtime, info.title, info.issueKey)
+        return info
+    }
 
-        let title = (try? Data(contentsOf: url)).flatMap(TranscriptTitle.extract)
-        titleCache[sessionId] = (mtime, title)
-        return title
+    func title(for sessionId: String, cwd: String) -> String? {
+        info(for: sessionId, cwd: cwd).title
+    }
+
+    /// The current PaperclipAI issue key for a session (nil if not Paperclip).
+    func paperclipIssueKey(for sessionId: String, cwd: String) -> String? {
+        info(for: sessionId, cwd: cwd).issueKey
     }
 
     /// Finds `<sessionId>.jsonl`: first via the encoded-cwd directory, then by
