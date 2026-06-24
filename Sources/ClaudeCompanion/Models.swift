@@ -146,12 +146,15 @@ struct Session: Identifiable, Equatable {
     /// PaperclipAI issue key (e.g. "COR-95") when this is a Paperclip session.
     var issueKey: String?
 
-    /// A human label: lead with the Paperclip issue key when present (so
-    /// browser-driven sessions don't show a workspace UUID), else the
+    /// A human label: for PaperclipAI (`sdk-cli`) sessions lead with the issue
+    /// key (so browser-driven sessions don't show a workspace UUID), else the
     /// transcript title, else the directory name.
+    ///
+    /// The issue key is only honoured for `.sdk` sessions — any other session's
+    /// transcript may merely *mention* an issue key (e.g. while discussing one).
     var title: String {
         let summary = (customTitle?.isEmpty == false) ? customTitle : nil
-        if let key = issueKey, !key.isEmpty {
+        if entrypoint == .sdk, let key = issueKey, !key.isEmpty {
             return summary.map { "\(key)  ·  \($0)" } ?? key
         }
         if let summary { return summary }

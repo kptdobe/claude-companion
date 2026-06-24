@@ -309,6 +309,18 @@ final class TranscriptTitleTests: XCTestCase {
         XCTAssertEqual(session.title,
                        "COR-61  ·  Investigate writeAuditEntry shard convergence failures")
     }
+
+    func testNonSDKSessionIgnoresStrayIssueKey() {
+        // A Desktop/VS Code session whose transcript merely mentions an issue
+        // key (e.g. while discussing it) must NOT show it as the title.
+        var session = Session(id: "x", pid: 1, cwd: "/Users/me/work/claude-companion",
+                              entrypoint: .desktop, activity: .thinking, lastActivity: Date())
+        session.issueKey = "COR-95"
+        session.customTitle = "macOS Claude companion app"
+        XCTAssertEqual(session.title, "macOS Claude companion app")
+        session.customTitle = nil
+        XCTAssertEqual(session.title, "claude-companion")
+    }
 }
 
 final class TranscriptInfoTests: XCTestCase {
@@ -352,15 +364,6 @@ final class PaperclipTests: XCTestCase {
 
     func testNonPaperclipTranscriptHasNoIssueKey() {
         XCTAssertNil(Paperclip.issueKey(fromTranscript: "just a normal session, no wake here"))
-    }
-
-    func testIssueURLBuildsFromKeyPrefix() {
-        XCTAssertEqual(
-            Paperclip.issueURL(forKey: "COR-95")?.absoluteString,
-            "http://localhost:3100/COR/issues/COR-95")
-        XCTAssertEqual(
-            Paperclip.issueURL(forKey: "ABC-12", baseURL: "http://localhost:4000")?.absoluteString,
-            "http://localhost:4000/ABC/issues/ABC-12")
     }
 }
 

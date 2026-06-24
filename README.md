@@ -15,8 +15,10 @@ Terminal CLI, the VS Code extension, and the Claude Desktop app.
   - 🟢 **Done** — finished its turn, awaiting your next prompt
 - **Click a session** to jump straight to where it lives:
   - the right **VS Code window**, **terminal tab**, or **Claude Desktop**, and
-  - for **PaperclipAI** sessions (`sdk-cli`, driven in the browser), the correct
-    **Chrome tab** for the issue — e.g. `localhost:3100/COR/issues/COR-95`.
+  - for **PaperclipAI** sessions (`sdk-cli`, driven in the browser), the session
+    is labelled with its issue key (e.g. `COR-95`) and clicking brings **Chrome**
+    to the front. (Switching to the exact issue tab isn't reliable across
+    multiple Chrome profiles, so it just focuses the browser.)
 
 ## How it works
 
@@ -78,11 +80,8 @@ Accessibility** (enable **Claude Companion**), then click the session again.
 
 - Terminal/iTerm tab targeting additionally uses **Automation** (to read the
   controlling TTY), which prompts separately.
-- PaperclipAI → Chrome tab jumping uses **Automation → Google Chrome** (to find
-  the tab) plus **Accessibility** (to post the ⌘-number shortcut that actually
-  switches the tab — Chrome ignores the AppleScript "active tab" setter on recent
-  macOS). Note: ⌘1–⌘8 reach tabs 1–8 and ⌘9 the last tab, so a target beyond the
-  8th tab (and not last) is foregrounded but not switched.
+- PaperclipAI (`sdk-cli`) sessions just bring **Google Chrome** to the front
+  (via LaunchServices) — no extra permission needed.
 - If you previously ran an ad-hoc build, remove any stale **Claude Companion**
   entries from the Accessibility list first, then grant the signed build once.
 

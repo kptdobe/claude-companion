@@ -70,7 +70,11 @@ final class StatusItemController: NSObject {
             for var session in active {
                 let info = titles.info(for: session.id, cwd: session.cwd)
                 session.customTitle = info.title
-                session.issueKey = info.issueKey
+                // Only PaperclipAI (sdk-cli) sessions are issue-scoped; other
+                // sessions may merely mention an issue key in their transcript.
+                if session.entrypoint == .sdk {
+                    session.issueKey = info.issueKey
+                }
                 menu.addItem(sessionItem(session))
             }
         }
