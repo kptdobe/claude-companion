@@ -177,8 +177,8 @@ final class StatusItemController: NSObject {
         menu.addItem(pinUnpinAlternate(pin: true, session: session, record: nil))
     }
 
-    /// A pinned session (live or closed). Live → jump; closed → reopen. ⌥ reveals
-    /// "Unpin".
+    /// A pinned session (live or closed). Live → jump; closed → copy the resume
+    /// command to the clipboard. ⌥ reveals "Unpin".
     private func addPinnedRow(_ record: PinnedSession, live: Session?, to menu: NSMenu) {
         if let live {
             let item = sessionItem(resolved(live))
@@ -190,7 +190,8 @@ final class StatusItemController: NSObject {
         menu.addItem(pinUnpinAlternate(pin: false, session: nil, record: record))
     }
 
-    /// The row for a pinned session whose process has closed: reopen on click.
+    /// The row for a pinned session whose process has closed: copy the resume
+    /// command to the clipboard on click.
     private func closedPinnedItem(_ record: PinnedSession) -> NSMenuItem {
         let resolvedTitle = titles.title(for: record.sessionId, cwd: record.cwd)
             ?? record.title
@@ -204,8 +205,8 @@ final class StatusItemController: NSObject {
         item.keyEquivalentModifierMask = []
         item.image = symbol("pin.fill", color: .systemGray)
         let entry = Entrypoint(raw: record.entrypoint).label
-        item.attributedTitle = twoLine(display, subtitle: "Closed · \(entry) · click to reopen")
-        item.toolTip = "Reopen in Terminal (claude --resume)\n⌥-click to unpin\n\(record.cwd)"
+        item.attributedTitle = twoLine(display, subtitle: "Closed · \(entry) · click to copy command")
+        item.toolTip = "Copy resume command to clipboard (claude --resume)\n⌥-click to unpin\n\(record.cwd)"
         return item
     }
 
@@ -427,7 +428,7 @@ final class StatusItemController: NSObject {
 
     @objc private func reopen(_ sender: NSMenuItem) {
         guard let record = sender.representedObject as? PinnedSession else { return }
-        SessionLauncher.reopen(record)
+        SessionLauncher.copyResumeCommand(record)
     }
 
     @objc private func showHeadroomInstall() {
