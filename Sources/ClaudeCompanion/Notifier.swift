@@ -1,37 +1,53 @@
 import AppKit
+import UserNotifications
 
 /// Posts macOS notifications when sessions change state.
 ///
-/// Uses `NSUserNotificationCenter` rather than the modern `UserNotifications`
-/// framework on purpose: `UNUserNotificationCenter` requires a stably-signed
-/// bundle to get its authorization prompt, so on the ad-hoc-signed local build
-/// the prompt never appears and every post is silently dropped. The older API
-/// needs only a bundle identifier (which the `.app` has) — no prompt, no
-/// entitlement, no stable signature — so notifications actually show. Deliver
-/// still no-ops for a bare `swift run` (no bundle id), keeping dev runs quiet.
-final class Notifier {
+/// Uses the modern `UserNotifications` framework (`UNUserNotificationCenter`).
+/// The legacy `NSUserNotification` API this used to rely on was deprecated in
+/// macOS 11 and no longer delivers anything on macOS 15+/26 — `deliver` returns
+/// without error but nothing ever appears, and the app never registers as a
+/// notification client. `UNUserNotificationCenter` works for our signed,
+/// bundled `LSUIElement` app because it has a stable bundle identifier and a
+/// code signature (even ad-hoc): that's all the authorization prompt needs.
+///
+/// Delivery still no-ops for a bare `swift run` (no bundle id / no signature),
+/// keeping dev runs quiet.
+final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     private let enabled = Bundle.main.bundleIdentifier != nil
+    private var authorized = false
+
+    override init() {
+        super.init()
+        guard enabled else { return }
+        let center = UNUserNotificationCenter.current()
+        // Present banners even when the companion is the frontmost app.
+        center.delegate = self
+        center.requestAuthorization(options: [.alert, .sound]) { [weak self] granted, _ in
+            self?.authorized = granted
+        }
+    }
 
     /// Post a notification. `sound` is used for attention-worthy transitions.
     func post(title: String, body: String, sound: Bool) {
         guard enabled else { return }
-        let note = NSUserNotification()
-        note.title = title
-        note.informativeText = body
-        if sound { note.soundName = NSUserNotificationDefaultSoundName }
-        let center = NSUserNotificationCenter.default
-        // Show even if the companion happens to be the active app.
-        center.delegate = Notifier.forcePresenter
-        center.deliver(note)
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        if sound { content.sound = .default }
+        // A nil trigger delivers immediately. A fresh UUID per post so rapid
+        // transitions don't coalesce onto one another.
+        let request = UNNotificationRequest(
+            identifier: UUID().uuidString, content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request)
     }
 
-    /// Forces Notification Center to display our notifications even when the app
-    /// is frontmost (default behaviour otherwise suppresses them).
-    private static let forcePresenter = ForcePresenter()
-    private final class ForcePresenter: NSObject, NSUserNotificationCenterDelegate {
-        func userNotificationCenter(_ center: NSUserNotificationCenter,
-                                    shouldPresent notification: NSUserNotification) -> Bool {
-            true
-        }
+    /// Show banners even when the app is frontmost (default would suppress them).
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler:
+            @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .sound])
     }
 }
