@@ -102,12 +102,29 @@ final class SessionMonitor {
     private var timer: Timer?
     private(set) var sessions: [Session] = []
 
+    /// Token/cost usage, scanned off the main thread (transcripts can be large).
+    private let usageStore: UsageStore
+    private let usageQueue = DispatchQueue(label: "com.acapt.claude-companion.usage")
+    private var usageBusy = false
+    private var lastUsageScan: Date = .distantPast
+    private(set) var usage = UsageSnapshot()
+
+    /// headroom.ai savings, polled off the main thread (spawns a CLI process).
+    private var headroomBusy = false
+    private var lastHeadroomScan: Date = .distantPast
+    private(set) var headroom: HeadroomSavings?
+
     /// Called on the main thread whenever the merged list changes.
     var onChange: (([Session]) -> Void)?
+    /// Called on the main thread whenever the usage snapshot changes.
+    var onUsage: ((UsageSnapshot) -> Void)?
+    /// Called on the main thread whenever the headroom savings change.
+    var onHeadroom: ((HeadroomSavings?) -> Void)?
 
     init(claudeDir: URL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".claude")) {
         self.claudeDir = claudeDir
+        self.usageStore = UsageStore(claudeDir: claudeDir)
     }
 
     func start(interval: TimeInterval = 1.5) {
@@ -133,6 +150,45 @@ final class SessionMonitor {
         if merged != sessions {
             sessions = merged
             onChange?(merged)
+        }
+        refreshUsage()
+        refreshHeadroom()
+    }
+
+    /// Kick off a background usage scan at most every few seconds, coalescing
+    /// so a slow first pass never stacks up behind the 1.5s timer.
+    private func refreshUsage(minInterval: TimeInterval = 4) {
+        guard !usageBusy, Date().timeIntervalSince(lastUsageScan) >= minInterval else { return }
+        usageBusy = true
+        usageQueue.async { [weak self] in
+            guard let self else { return }
+            let snapshot = self.usageStore.scan()
+            DispatchQueue.main.async {
+                self.usageBusy = false
+                self.lastUsageScan = Date()
+                if snapshot != self.usage {
+                    self.usage = snapshot
+                    self.onUsage?(snapshot)
+                }
+            }
+        }
+    }
+
+    /// Poll headroom savings on a slow cadence (each call spawns a process).
+    private func refreshHeadroom(minInterval: TimeInterval = 20) {
+        guard !headroomBusy, Date().timeIntervalSince(lastHeadroomScan) >= minInterval else { return }
+        headroomBusy = true
+        usageQueue.async { [weak self] in
+            let savings = HeadroomStore.fetchSavings()
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.headroomBusy = false
+                self.lastHeadroomScan = Date()
+                if savings != self.headroom {
+                    self.headroom = savings
+                    self.onHeadroom?(savings)
+                }
+            }
         }
     }
 

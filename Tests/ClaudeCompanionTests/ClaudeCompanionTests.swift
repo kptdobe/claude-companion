@@ -367,6 +367,132 @@ final class PaperclipTests: XCTestCase {
     }
 }
 
+final class ModelPricingTests: XCTestCase {
+    func testModelFamilyMatching() {
+        XCTAssertEqual(ModelPricing.forModel("claude-opus-4-8").input, ModelPricing.opus.input)
+        XCTAssertEqual(ModelPricing.forModel("claude-opus-4-8[1m]").output, ModelPricing.opus.output)
+        XCTAssertEqual(ModelPricing.forModel("claude-sonnet-5").input, ModelPricing.sonnet.input)
+        XCTAssertEqual(ModelPricing.forModel("claude-haiku-4-5-20251001").input, ModelPricing.haiku.input)
+    }
+
+    func testSyntheticIsFreeAndUnknownFallsBackToSonnet() {
+        XCTAssertEqual(ModelPricing.forModel("<synthetic>").input, 0)
+        XCTAssertEqual(ModelPricing.forModel("<synthetic>").output, 0)
+        // Unknown / future paid model → mid-tier (Sonnet) estimate.
+        XCTAssertEqual(ModelPricing.forModel("claude-fable-5").input, ModelPricing.sonnet.input)
+        XCTAssertEqual(ModelPricing.forModel(nil).input, ModelPricing.sonnet.input)
+    }
+}
+
+final class UsageParserTests: XCTestCase {
+    func testParsesTokensAndPricesSonnet() {
+        // 1M Sonnet input tokens = $3.00, nothing else.
+        let line = #"{"type":"assistant","timestamp":"2026-08-10T11:41:58.123Z","message":{"id":"m1","model":"claude-sonnet-5","usage":{"input_tokens":1000000,"output_tokens":0,"cache_read_input_tokens":0}}}"#
+        let parsed = UsageParser.parseLine(line)
+        XCTAssertEqual(parsed?.id, "m1")
+        XCTAssertEqual(parsed?.totals.inputTokens, 1_000_000)
+        XCTAssertEqual(parsed?.totals.totalTokens, 1_000_000)
+        XCTAssertEqual(parsed?.totals.cost ?? 0, 3.0, accuracy: 1e-9)
+        XCTAssertNotNil(parsed?.timestamp)
+    }
+
+    func testCacheTiersArePricedSeparately() {
+        // Opus: cache read 1M ($1.50) + 5m write 1M ($18.75) + 1h write 1M ($30) = $50.25.
+        let line = #"{"type":"assistant","timestamp":"2026-08-10T11:41:58Z","message":{"id":"m2","model":"claude-opus-4-8","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":1000000,"cache_creation":{"ephemeral_5m_input_tokens":1000000,"ephemeral_1h_input_tokens":1000000}}}}"#
+        let parsed = UsageParser.parseLine(line)
+        XCTAssertEqual(parsed?.totals.cacheReadTokens, 1_000_000)
+        XCTAssertEqual(parsed?.totals.cacheWriteTokens, 2_000_000)
+        XCTAssertEqual(parsed?.totals.cost ?? 0, 50.25, accuracy: 1e-9)
+        // Parsed the fraction-less ISO timestamp too.
+        XCTAssertNotNil(parsed?.timestamp)
+    }
+
+    func testFlatCacheCreationFallback() {
+        // No per-TTL breakdown → the flat count is priced at the 5-minute tier.
+        let line = #"{"type":"assistant","message":{"id":"m3","model":"claude-sonnet-5","usage":{"input_tokens":0,"output_tokens":0,"cache_creation_input_tokens":1000000}}}"#
+        let parsed = UsageParser.parseLine(line)
+        XCTAssertEqual(parsed?.totals.cacheWriteTokens, 1_000_000)
+        XCTAssertEqual(parsed?.totals.cost ?? 0, ModelPricing.sonnet.cacheWrite5m, accuracy: 1e-9)
+    }
+
+    func testNonUsageLinesAreIgnored() {
+        XCTAssertNil(UsageParser.parseLine(#"{"type":"user","message":{"content":"hi"}}"#))
+        XCTAssertNil(UsageParser.parseLine(#"{"type":"ai-title","aiTitle":"x"}"#))
+        XCTAssertNil(UsageParser.parseLine("not json but mentions usage"))
+    }
+}
+
+final class UsageFormatTests: XCTestCase {
+    func testTokenFormatting() {
+        XCTAssertEqual(UsageFormat.tokens(42), "42")
+        XCTAssertEqual(UsageFormat.tokens(999), "999")
+        XCTAssertEqual(UsageFormat.tokens(15_234), "15K")
+        XCTAssertEqual(UsageFormat.tokens(1_240_000), "1.2M")
+        XCTAssertEqual(UsageFormat.tokens(218_000_000), "218M")
+        XCTAssertEqual(UsageFormat.tokens(2_100_000_000), "2.1B")
+    }
+
+    func testCostFormatting() {
+        XCTAssertEqual(UsageFormat.cost(0.0384), "$0.04")
+        XCTAssertEqual(UsageFormat.cost(254.238), "$254.24")
+        XCTAssertEqual(UsageFormat.cost(0), "$0.00")
+    }
+}
+
+final class UsageStoreTests: XCTestCase {
+    private func makeClaudeDir() -> URL {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cc-usage-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(
+            at: dir.appendingPathComponent("projects/-proj"),
+            withIntermediateDirectories: true)
+        return dir
+    }
+
+    private func line(id: String, input: Int, at date: Date) -> String {
+        let ts = ISO8601DateFormatter().string(from: date)
+        return #"{"type":"assistant","timestamp":"\#(ts)","message":{"id":"\#(id)","model":"claude-sonnet-5","usage":{"input_tokens":\#(input),"output_tokens":0}}}"#
+    }
+
+    func testAggregatesPerSessionAndToday() throws {
+        let claude = makeClaudeDir()
+        let transcript = claude.appendingPathComponent("projects/-proj/sess-1.jsonl")
+        let now = Date()
+        let body = [line(id: "a", input: 1_000_000, at: now),
+                    line(id: "b", input: 2_000_000, at: now)].joined(separator: "\n") + "\n"
+        try body.write(to: transcript, atomically: true, encoding: .utf8)
+
+        let store = UsageStore(claudeDir: claude)
+        let snap = store.scan(now: now)
+        XCTAssertEqual(snap.perSession["sess-1"]?.totalTokens, 3_000_000)
+        XCTAssertEqual(snap.today.totalTokens, 3_000_000)
+        XCTAssertEqual(snap.today.cost, 9.0, accuracy: 1e-9)  // 3M Sonnet input @ $3/M
+    }
+
+    func testIncrementalAppendAndDedup() throws {
+        let claude = makeClaudeDir()
+        let transcript = claude.appendingPathComponent("projects/-proj/sess-2.jsonl")
+        let now = Date()
+        try (line(id: "a", input: 1_000_000, at: now) + "\n")
+            .write(to: transcript, atomically: true, encoding: .utf8)
+
+        let store = UsageStore(claudeDir: claude)
+        XCTAssertEqual(store.scan(now: now).perSession["sess-2"]?.totalTokens, 1_000_000)
+
+        // Append a new line + re-append the SAME id (should be deduped).
+        let handle = try FileHandle(forWritingTo: transcript)
+        handle.seekToEndOfFile()
+        let more = (line(id: "b", input: 500_000, at: now) + "\n"
+                    + line(id: "a", input: 1_000_000, at: now) + "\n")
+        handle.write(Data(more.utf8))
+        try handle.close()
+
+        let snap = store.scan(now: now)
+        XCTAssertEqual(snap.perSession["sess-2"]?.totalTokens, 1_500_000,
+                       "duplicate id must not be counted twice")
+    }
+}
+
 final class WindowActivatorTests: XCTestCase {
     func testBestWorkspacePicksContainingFolder() {
         let locks = [

@@ -19,6 +19,12 @@ Terminal CLI, the VS Code extension, and the Claude Desktop app.
     is labelled with its issue key (e.g. `COR-95`) and clicking brings **Chrome**
     to the front. (Switching to the exact issue tab isn't reliable across
     multiple Chrome profiles, so it just focuses the browser.)
+- **Token usage & cost** per session, plus **Today** and **Last 30 days**
+  totals — read straight from the transcripts and priced with a local estimate.
+- **headroom.ai savings** when [headroom](https://github.com/headroomlabs-ai/headroom)
+  is installed: how many tokens and dollars its context compression has saved.
+- **Notifications** when a session starts **waiting for you** or **finishes**
+  (toggle in the menu).
 
 ## How it works
 
@@ -37,6 +43,13 @@ script (`scripts/claude-companion-hook`) runs on each hook event and writes
 | `Stop`, `SubagentStop`, `SessionEnd` | `idle` |
 
 The app polls these directories (~1.5s) and re-renders the menu bar.
+
+For **cost & tokens**, it reads each session's JSONL transcript (append-only, so
+it parses only newly-appended bytes) and sums the per-message `usage` block,
+priced by model with an approximate local rate table — Claude Code remains the
+source of truth for real billing. **headroom savings** come from
+`headroom savings --json` when the CLI is installed; if it isn't, first run
+offers to install it.
 
 ## Setup
 
@@ -118,6 +131,10 @@ swift build
 | `Sources/ClaudeCompanion/WindowActivator.swift` | jump-to-window per entrypoint |
 | `Sources/ClaudeCompanion/WindowFocuser.swift` | native Accessibility-API window raising + title matching |
 | `Sources/ClaudeCompanion/Paperclip.swift` | PaperclipAI issue-key extraction + issue URL building |
+| `Sources/ClaudeCompanion/TokenUsage.swift` | token/cost model, model pricing, transcript usage parser, formatting |
+| `Sources/ClaudeCompanion/UsageStore.swift` | incremental transcript scan → per-session + today/30-day totals |
+| `Sources/ClaudeCompanion/HeadroomStore.swift` | detect the headroom CLI + read its savings ledger |
+| `Sources/ClaudeCompanion/Notifier.swift` | user notifications on session state changes |
 | `scripts/claude-companion-hook` | per-event state writer (runs inside Claude Code) |
 | `scripts/install-hooks.mjs` | wires the hooks into `settings.json` (dry-run by default) |
 | `scripts/setup-signing.sh` | one-time stable self-signed code-signing identity |
