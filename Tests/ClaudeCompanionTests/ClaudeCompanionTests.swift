@@ -439,6 +439,64 @@ final class UsageFormatTests: XCTestCase {
     }
 }
 
+final class SubscriptionUsageTests: XCTestCase {
+    func testDecodesMonthlySpendLimit() {
+        // Enterprise: extra_usage carries the dollar limit; rate windows unused.
+        let json = #"""
+        {"latest":{"extra_usage":{"is_enabled":true,"monthly_limit_usd":1400.0,"used_credits_usd":630.27,"utilization_pct":45.02},"five_hour":{"used":0,"limit":0,"utilization_pct":0.0,"resets_at":null,"seconds_to_reset":null},"seven_day":{"used":0,"limit":0,"utilization_pct":0.0},"polled_at":"2026-08-17T08:33:52Z"}}
+        """#.data(using: .utf8)!
+        let sub = HeadroomStore.parseSubscription(json)
+        XCTAssertEqual(sub?.spendLimit?.limitUSD, 1400.0)
+        XCTAssertEqual(sub?.spendLimit?.usedUSD, 630.27)
+        XCTAssertEqual(sub?.spendLimit?.utilizationPct ?? 0, 45.02, accuracy: 1e-9)
+        XCTAssertEqual(sub?.spendLimit?.remainingUSD ?? 0, 769.73, accuracy: 1e-9)
+        XCTAssertNotNil(sub?.polledAt)
+        // Zero-limit rate windows are present but carry no usable data.
+        XCTAssertEqual(sub?.fiveHour?.limit, 0)
+    }
+
+    func testDecodesProMaxRateWindows() {
+        // Pro/Max: extra_usage disabled; 5h/7d windows populated with resets.
+        let json = #"""
+        {"latest":{"extra_usage":{"is_enabled":false,"monthly_limit_usd":null,"used_credits_usd":null,"utilization_pct":null},"five_hour":{"used":1200,"limit":10000,"utilization_pct":12.0,"resets_at":"2026-08-17T12:00:00Z","seconds_to_reset":900},"seven_day":{"used":300,"limit":10000,"utilization_pct":3.0,"resets_at":"2026-08-20T00:00:00Z","seconds_to_reset":260000}}}
+        """#.data(using: .utf8)!
+        let sub = HeadroomStore.parseSubscription(json)
+        XCTAssertNil(sub?.spendLimit, "disabled extra_usage yields no spend limit")
+        XCTAssertEqual(sub?.fiveHour?.limit, 10000)
+        XCTAssertEqual(sub?.fiveHour?.utilizationPct ?? 0, 12.0, accuracy: 1e-9)
+        XCTAssertNotNil(sub?.fiveHour?.resetsAt)
+        XCTAssertEqual(sub?.sevenDay?.secondsToReset, 260000)
+        XCTAssertTrue(sub?.hasData ?? false)
+    }
+
+    func testNoUsableDataYieldsNil() {
+        let json = #"{"latest":{"extra_usage":{"is_enabled":false},"five_hour":{"limit":0},"seven_day":{"limit":0}}}"#
+            .data(using: .utf8)!
+        XCTAssertNil(HeadroomStore.parseSubscription(json), "nothing worth showing → nil")
+    }
+
+    func testMalformedInputYieldsNil() {
+        XCTAssertNil(HeadroomStore.parseSubscription(Data("not json".utf8)))
+        XCTAssertNil(HeadroomStore.parseSubscription(Data("{}".utf8)))
+    }
+}
+
+final class BudgetMeterTests: XCTestCase {
+    func testBarFills() {
+        XCTAssertEqual(UsageFormat.bar(0, width: 4), "░░░░")
+        XCTAssertEqual(UsageFormat.bar(1, width: 4), "████")
+        XCTAssertEqual(UsageFormat.bar(0.5, width: 4), "██░░")
+        // Over budget clamps to full.
+        XCTAssertEqual(UsageFormat.bar(1.5, width: 4), "████")
+    }
+
+    func testPercent() {
+        XCTAssertEqual(UsageFormat.percent(0.447), "45%")
+        XCTAssertEqual(UsageFormat.percent(0), "0%")
+        XCTAssertEqual(UsageFormat.percent(1.2), "120%")
+    }
+}
+
 final class UsageStoreTests: XCTestCase {
     private func makeClaudeDir() -> URL {
         let dir = FileManager.default.temporaryDirectory

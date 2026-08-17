@@ -113,6 +113,8 @@ final class SessionMonitor {
     private var headroomBusy = false
     private var lastHeadroomScan: Date = .distantPast
     private(set) var headroom: HeadroomSavings?
+    /// Subscription usage limits from headroom's polled cache.
+    private(set) var subscription: SubscriptionUsage?
 
     /// Called on the main thread whenever the merged list changes.
     var onChange: (([Session]) -> Void)?
@@ -120,6 +122,8 @@ final class SessionMonitor {
     var onUsage: ((UsageSnapshot) -> Void)?
     /// Called on the main thread whenever the headroom savings change.
     var onHeadroom: ((HeadroomSavings?) -> Void)?
+    /// Called on the main thread whenever the subscription usage changes.
+    var onSubscription: ((SubscriptionUsage?) -> Void)?
 
     init(claudeDir: URL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".claude")) {
@@ -180,6 +184,7 @@ final class SessionMonitor {
         headroomBusy = true
         usageQueue.async { [weak self] in
             let savings = HeadroomStore.fetchSavings()
+            let subscription = HeadroomStore.readSubscription()
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.headroomBusy = false
@@ -187,6 +192,10 @@ final class SessionMonitor {
                 if savings != self.headroom {
                     self.headroom = savings
                     self.onHeadroom?(savings)
+                }
+                if subscription != self.subscription {
+                    self.subscription = subscription
+                    self.onSubscription?(subscription)
                 }
             }
         }

@@ -1,33 +1,37 @@
 import AppKit
-import UserNotifications
 
-/// Posts macOS user notifications when sessions change state.
+/// Posts macOS notifications when sessions change state.
 ///
-/// UserNotifications requires a bundled, signed app (a bare `swift run` has no
-/// bundle identifier). When unbundled we no-op rather than crash, so dev runs
-/// still work — the shipped `ClaudeCompanion.app` gets real notifications.
+/// Uses `NSUserNotificationCenter` rather than the modern `UserNotifications`
+/// framework on purpose: `UNUserNotificationCenter` requires a stably-signed
+/// bundle to get its authorization prompt, so on the ad-hoc-signed local build
+/// the prompt never appears and every post is silently dropped. The older API
+/// needs only a bundle identifier (which the `.app` has) — no prompt, no
+/// entitlement, no stable signature — so notifications actually show. Deliver
+/// still no-ops for a bare `swift run` (no bundle id), keeping dev runs quiet.
 final class Notifier {
-    private let enabled: Bool
-    private var authorized = false
-
-    init() {
-        enabled = Bundle.main.bundleIdentifier != nil
-        guard enabled else { return }
-        UNUserNotificationCenter.current().requestAuthorization(
-            options: [.alert, .sound]) { [weak self] granted, _ in
-            self?.authorized = granted
-        }
-    }
+    private let enabled = Bundle.main.bundleIdentifier != nil
 
     /// Post a notification. `sound` is used for attention-worthy transitions.
     func post(title: String, body: String, sound: Bool) {
         guard enabled else { return }
-        let content = UNMutableNotificationContent()
-        content.title = title
-        content.body = body
-        if sound { content.sound = .default }
-        let request = UNNotificationRequest(
-            identifier: UUID().uuidString, content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request)
+        let note = NSUserNotification()
+        note.title = title
+        note.informativeText = body
+        if sound { note.soundName = NSUserNotificationDefaultSoundName }
+        let center = NSUserNotificationCenter.default
+        // Show even if the companion happens to be the active app.
+        center.delegate = Notifier.forcePresenter
+        center.deliver(note)
+    }
+
+    /// Forces Notification Center to display our notifications even when the app
+    /// is frontmost (default behaviour otherwise suppresses them).
+    private static let forcePresenter = ForcePresenter()
+    private final class ForcePresenter: NSObject, NSUserNotificationCenterDelegate {
+        func userNotificationCenter(_ center: NSUserNotificationCenter,
+                                    shouldPresent notification: NSUserNotification) -> Bool {
+            true
+        }
     }
 }

@@ -30,8 +30,13 @@ BIN="$(cd "$ROOT" && swift build -c release --show-bin-path)/ClaudeCompanion"
 
 echo "Assembling bundle…"
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/ClaudeCompanion"
+
+# App icon — generate it once if missing, then bundle it.
+ICON="$ROOT/Resources/AppIcon.icns"
+[ -f "$ICON" ] || "$ROOT/scripts/make-appicon.sh"
+[ -f "$ICON" ] && cp "$ICON" "$APP/Contents/Resources/AppIcon.icns"
 
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -44,6 +49,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleVersion</key>         <string>0.1.0</string>
     <key>CFBundleShortVersionString</key><string>0.1.0</string>
     <key>CFBundleExecutable</key>      <string>ClaudeCompanion</string>
+    <key>CFBundleIconFile</key>        <string>AppIcon</string>
     <key>CFBundlePackageType</key>     <string>APPL</string>
     <key>LSMinimumSystemVersion</key>  <string>13.0</string>
     <key>LSUIElement</key>             <true/>

@@ -179,4 +179,17 @@ enum UsageFormat {
     static func costAndTokens(_ u: UsageTotals) -> String {
         "\(cost(u.cost)) · \(tokens(u.totalTokens)) tokens"
     }
+
+    /// A compact text meter: "██████░░░░░░" at the given fraction (0…1).
+    static func bar(_ fraction: Double, width: Int = 12) -> String {
+        let clamped = min(max(fraction, 0), 1)
+        let filled = Int((clamped * Double(width)).rounded())
+        return String(repeating: "█", count: filled)
+            + String(repeating: "░", count: max(width - filled, 0))
+    }
+
+    /// "45%" — whole-percent, clamped at/above 0 (over-limit can exceed 100).
+    static func percent(_ fraction: Double) -> String {
+        "\(Int((max(fraction, 0) * 100).rounded()))%"
+    }
 }

@@ -23,6 +23,9 @@ Terminal CLI, the VS Code extension, and the Claude Desktop app.
   totals — read straight from the transcripts and priced with a local estimate.
 - **headroom.ai savings** when [headroom](https://github.com/headroomlabs-ai/headroom)
   is installed: how many tokens and dollars its context compression has saved.
+- **Usage limits** from your subscription — the console "Your usage limits"
+  figures (e.g. `$630.27 of $1,400.00 · 45% used`, or the session/weekly
+  rate-limit windows), read from headroom's polled cache when available.
 - **Notifications** when a session starts **waiting for you** or **finishes**
   (toggle in the menu).
 
@@ -49,7 +52,11 @@ it parses only newly-appended bytes) and sums the per-message `usage` block,
 priced by model with an approximate local rate table — Claude Code remains the
 source of truth for real billing. **headroom savings** come from
 `headroom savings --json` when the CLI is installed; if it isn't, first run
-offers to install it.
+offers to install it. The **subscription usage limits** are read from
+headroom's polled cache (`~/.headroom/subscription_state.json`) — the same
+figures the Anthropic console's "Your usage limits" panel shows; there's no
+Claude-Code-local source for them, so this section only appears when headroom
+is caching them.
 
 ## Setup
 
@@ -133,12 +140,13 @@ swift build
 | `Sources/ClaudeCompanion/Paperclip.swift` | PaperclipAI issue-key extraction + issue URL building |
 | `Sources/ClaudeCompanion/TokenUsage.swift` | token/cost model, model pricing, transcript usage parser, formatting |
 | `Sources/ClaudeCompanion/UsageStore.swift` | incremental transcript scan → per-session + today/30-day totals |
-| `Sources/ClaudeCompanion/HeadroomStore.swift` | detect the headroom CLI + read its savings ledger |
+| `Sources/ClaudeCompanion/HeadroomStore.swift` | detect the headroom CLI + read its savings ledger and subscription usage-limit cache |
 | `Sources/ClaudeCompanion/Notifier.swift` | user notifications on session state changes |
 | `scripts/claude-companion-hook` | per-event state writer (runs inside Claude Code) |
 | `scripts/install-hooks.mjs` | wires the hooks into `settings.json` (dry-run by default) |
 | `scripts/setup-signing.sh` | one-time stable self-signed code-signing identity |
-| `scripts/build-app.sh` | assembles + signs the `.app` bundle |
+| `scripts/build-app.sh` | assembles + signs the `.app` bundle (bundles the icon) |
+| `scripts/make-appicon.swift` / `.sh` | generate `Resources/AppIcon.icns` (squircle + speech-bubble glyph) |
 
 ## Status / roadmap
 

@@ -21,6 +21,7 @@ final class StatusItemController: NSObject {
     private var latestSessions: [Session] = []
     private var latestUsage = UsageSnapshot()
     private var latestHeadroom: HeadroomSavings?
+    private var latestSubscription: SubscriptionUsage?
 
     init(monitor: SessionMonitor = SessionMonitor()) {
         self.monitor = monitor
@@ -39,6 +40,10 @@ final class StatusItemController: NSObject {
         }
         monitor.onHeadroom = { [weak self] savings in
             self?.latestHeadroom = savings
+            self?.render()
+        }
+        monitor.onSubscription = { [weak self] subscription in
+            self?.latestSubscription = subscription
             self?.render()
         }
         monitor.start()
@@ -76,6 +81,10 @@ final class StatusItemController: NSObject {
 
     private func rebuildMenu(_ sessions: [Session]) {
         let menu = NSMenu()
+        // We enable/disable items explicitly: this keeps our no-action display
+        // rows (Cost / Usage limits / Headroom) at full strength instead of the
+        // dimmed look AppKit applies to auto-disabled items.
+        menu.autoenablesItems = false
 
         let active = SessionMerger.active(sessions)
         let hidden = sessions.count - active.count
@@ -110,6 +119,7 @@ final class StatusItemController: NSObject {
         }
 
         addCostSection(to: menu)
+        addUsageLimitsSection(to: menu)
         addHeadroomSection(to: menu)
 
         menu.addItem(.separator())
@@ -177,19 +187,64 @@ final class StatusItemController: NSObject {
     private func addCostSection(to menu: NSMenu) {
         guard !latestUsage.today.isEmpty || !latestUsage.last30.isEmpty else { return }
         menu.addItem(.separator())
-        menu.addItem(disabled(header: "Cost"))
-        menu.addItem(disabled(info: "Today: \(UsageFormat.costAndTokens(latestUsage.today))"))
-        menu.addItem(disabled(info: "Last 30 days: \(UsageFormat.costAndTokens(latestUsage.last30))"))
+        menu.addItem(sectionHeader("Cost"))
+        menu.addItem(sectionInfo( "Today: \(UsageFormat.costAndTokens(latestUsage.today))"))
+        menu.addItem(sectionInfo( "Last 30 days: \(UsageFormat.costAndTokens(latestUsage.last30))"))
+    }
+
+    /// Your subscription's real usage limits, read from headroom's polled cache.
+    /// Prefers the monthly dollar spend limit; otherwise shows the 5h/7d
+    /// rate-limit windows. Omitted entirely when no data is available.
+    private func addUsageLimitsSection(to menu: NSMenu) {
+        guard let sub = latestSubscription, sub.hasData else { return }
+        menu.addItem(.separator())
+        menu.addItem(sectionHeader("Usage limits"))
+
+        if let s = sub.spendLimit {
+            let fraction = s.limitUSD > 0 ? s.usedUSD / s.limitUSD : 0
+            menu.addItem(sectionInfo(
+                "\(UsageFormat.cost(s.usedUSD)) of \(UsageFormat.cost(s.limitUSD)) spent · \(UsageFormat.percent(fraction)) used"))
+            menu.addItem(sectionInfo(
+                "\(UsageFormat.bar(fraction))  \(UsageFormat.cost(s.remainingUSD)) left"))
+        }
+        addRateWindow(sub.fiveHour, label: "Session (5h)", to: menu)
+        addRateWindow(sub.sevenDay, label: "Weekly", to: menu)
+    }
+
+    private func addRateWindow(_ window: SubscriptionUsage.RateWindow?,
+                               label: String, to menu: NSMenu) {
+        guard let w = window, w.limit > 0 else { return }
+        var line = "\(label): \(UsageFormat.percent(w.utilizationPct / 100)) used"
+        if let reset = Self.resetPhrase(w) { line += " · resets in \(reset)" }
+        menu.addItem(sectionInfo( line))
+    }
+
+    /// "3h 53m" / "3d 20h" from a window's reset time (prefers the absolute
+    /// timestamp, falls back to the countdown).
+    private static func resetPhrase(_ w: SubscriptionUsage.RateWindow) -> String? {
+        let seconds: Int
+        if let at = w.resetsAt {
+            seconds = Int(at.timeIntervalSinceNow)
+        } else if let s = w.secondsToReset {
+            seconds = s
+        } else {
+            return nil
+        }
+        guard seconds > 0 else { return nil }
+        let d = seconds / 86_400, h = (seconds % 86_400) / 3_600, m = (seconds % 3_600) / 60
+        if d > 0 { return "\(d)d \(h)h" }
+        if h > 0 { return "\(h)h \(m)m" }
+        return "\(m)m"
     }
 
     private func addHeadroomSection(to menu: NSMenu) {
         menu.addItem(.separator())
         if let h = latestHeadroom {
-            menu.addItem(disabled(header: "Headroom savings"))
+            menu.addItem(sectionHeader("Headroom savings"))
             let today = "\(UsageFormat.cost(h.costSavedToday)) · \(UsageFormat.tokens(h.tokensSavedToday)) tokens"
             let last30 = "\(UsageFormat.cost(h.costSaved30d)) · \(UsageFormat.tokens(h.tokensSaved30d)) tokens"
-            menu.addItem(disabled(info: "Today: \(today)"))
-            menu.addItem(disabled(info: "Last 30 days: \(last30)"))
+            menu.addItem(sectionInfo( "Today: \(today)"))
+            menu.addItem(sectionInfo( "Last 30 days: \(last30)"))
         } else {
             let install = NSMenuItem(
                 title: "Install headroom.ai to save tokens…",
@@ -200,21 +255,23 @@ final class StatusItemController: NSObject {
         }
     }
 
-    private func disabled(header: String) -> NSMenuItem {
-        let item = NSMenuItem(title: header, action: nil, keyEquivalent: "")
-        item.isEnabled = false
-        item.attributedTitle = NSAttributedString(string: header, attributes: [
+    // Non-actionable display rows. They carry no action, so with the menu's
+    // `autoenablesItems = false` they stay full-strength (not the dimmed look
+    // AppKit gives disabled items) while remaining unclickable.
+    private func sectionHeader(_ text: String) -> NSMenuItem {
+        let item = NSMenuItem(title: text, action: nil, keyEquivalent: "")
+        item.attributedTitle = NSAttributedString(string: text, attributes: [
             .font: NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .semibold),
+            .foregroundColor: NSColor.labelColor,
         ])
         return item
     }
 
-    private func disabled(info: String) -> NSMenuItem {
-        let item = NSMenuItem(title: info, action: nil, keyEquivalent: "")
-        item.isEnabled = false
-        item.attributedTitle = NSAttributedString(string: info, attributes: [
+    private func sectionInfo(_ text: String) -> NSMenuItem {
+        let item = NSMenuItem(title: text, action: nil, keyEquivalent: "")
+        item.attributedTitle = NSAttributedString(string: text, attributes: [
             .font: NSFont.menuFont(ofSize: NSFont.smallSystemFontSize),
-            .foregroundColor: NSColor.secondaryLabelColor,
+            .foregroundColor: NSColor.labelColor,
         ])
         return item
     }
