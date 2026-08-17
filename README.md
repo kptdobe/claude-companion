@@ -72,6 +72,22 @@ ad-hoc signed, its identity changes on every rebuild, and macOS forgets the
 Accessibility permission — re-prompting you on every click. With it, the grant
 sticks across rebuilds.
 
+### Uninstall
+
+`scripts/uninstall.sh` reverses every step above — quits the app, strips the
+companion hooks from `settings.json`, deletes the state dir, removes the built
+`.app`/`.build` outputs, and drops the self-signed keychain identity. Dry-run by
+default:
+
+```sh
+scripts/uninstall.sh            # preview
+scripts/uninstall.sh -x         # apply
+```
+
+It can't remove the **Accessibility** / **Automation** grants (macOS gives no
+CLI for that) — remove **Claude Companion** from those lists by hand in System
+Settings → Privacy & Security.
+
 ### 3. Grant permissions (first jump-to-window)
 
 Jumping to the right window uses the Accessibility API. On first use macOS
