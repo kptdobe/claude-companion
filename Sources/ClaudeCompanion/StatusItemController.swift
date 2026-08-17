@@ -98,14 +98,31 @@ final class StatusItemController: NSObject {
         menu.addItem(header)
         menu.addItem(.separator())
 
-        if active.isEmpty {
+        let pinned = PinnedStore.all()
+        let pinnedIds = Set(pinned.map(\.sessionId))
+        // Liveness is checked against the full merged list (includes alive but
+        // stateless sessions), so a pinned-but-quiet session still counts live.
+        let liveById = Dictionary(sessions.map { ($0.id, $0) },
+                                  uniquingKeysWith: { first, _ in first })
+
+        if !pinned.isEmpty {
+            menu.addItem(sectionHeader("Pinned"))
+            for record in pinned {
+                addPinnedRow(record, live: liveById[record.sessionId], to: menu)
+            }
+            menu.addItem(.separator())
+        }
+
+        // Live sessions that aren't already shown in the Pinned section.
+        let others = active.filter { !pinnedIds.contains($0.id) }
+        if active.isEmpty && pinned.isEmpty {
             let empty = NSMenuItem(
                 title: "No active sessions", action: nil, keyEquivalent: "")
             empty.isEnabled = false
             menu.addItem(empty)
         } else {
-            for session in active {
-                menu.addItem(sessionItem(resolved(session)))
+            for session in others {
+                addLiveRow(resolved(session), to: menu)
             }
         }
 
@@ -150,9 +167,67 @@ final class StatusItemController: NSObject {
         return s
     }
 
+    // MARK: - Pinned + live session rows
+
+    /// A live, non-pinned session: single-click jumps, ⌥ reveals "Pin".
+    private func addLiveRow(_ session: Session, to menu: NSMenu) {
+        let item = sessionItem(session)
+        item.toolTip = (item.toolTip ?? "") + "\n⌥-click to pin"
+        menu.addItem(item)
+        menu.addItem(pinUnpinAlternate(pin: true, session: session, record: nil))
+    }
+
+    /// A pinned session (live or closed). Live → jump; closed → reopen. ⌥ reveals
+    /// "Unpin".
+    private func addPinnedRow(_ record: PinnedSession, live: Session?, to menu: NSMenu) {
+        if let live {
+            let item = sessionItem(resolved(live))
+            item.toolTip = (item.toolTip ?? "") + "\n⌥-click to unpin"
+            menu.addItem(item)
+        } else {
+            menu.addItem(closedPinnedItem(record))
+        }
+        menu.addItem(pinUnpinAlternate(pin: false, session: nil, record: record))
+    }
+
+    /// The row for a pinned session whose process has closed: reopen on click.
+    private func closedPinnedItem(_ record: PinnedSession) -> NSMenuItem {
+        let resolvedTitle = titles.title(for: record.sessionId, cwd: record.cwd)
+            ?? record.title
+        let name = (record.cwd as NSString).lastPathComponent
+        let display = (resolvedTitle?.isEmpty == false ? resolvedTitle : nil)
+            ?? (name.isEmpty ? record.cwd : name)
+
+        let item = NSMenuItem(title: "", action: #selector(reopen(_:)), keyEquivalent: "")
+        item.target = self
+        item.representedObject = record
+        item.keyEquivalentModifierMask = []
+        item.image = symbol("pin.fill", color: .systemGray)
+        let entry = Entrypoint(raw: record.entrypoint).label
+        item.attributedTitle = twoLine(display, subtitle: "Closed · \(entry) · click to reopen")
+        item.toolTip = "Reopen in Terminal (claude --resume)\n⌥-click to unpin\n\(record.cwd)"
+        return item
+    }
+
+    /// The ⌥ alternate that swaps a session row to Pin (live) or Unpin (pinned).
+    private func pinUnpinAlternate(pin: Bool, session: Session?,
+                                   record: PinnedSession?) -> NSMenuItem {
+        let title = pin ? "Pin \(session.map { "“\($0.title)”" } ?? "Session")" : "Unpin"
+        let alt = NSMenuItem(
+            title: title, action: pin ? #selector(pin(_:)) : #selector(unpin(_:)),
+            keyEquivalent: "")
+        alt.target = self
+        alt.representedObject = pin ? (session as Any?) : (record?.sessionId as Any?)
+        alt.isAlternate = true
+        alt.keyEquivalentModifierMask = [.option]
+        alt.image = symbol(pin ? "pin" : "pin.slash", color: nil)
+        return alt
+    }
+
     private func sessionItem(_ session: Session) -> NSMenuItem {
         let item = NSMenuItem(
             title: "", action: #selector(jump(_:)), keyEquivalent: "")
+        item.keyEquivalentModifierMask = []  // pair cleanly with the ⌥ alternate
         item.target = self
         item.representedObject = session
         item.image = stateGlyph(session.activity)
@@ -334,6 +409,25 @@ final class StatusItemController: NSObject {
     @objc private func jump(_ sender: NSMenuItem) {
         guard let session = sender.representedObject as? Session else { return }
         WindowActivator.activate(session)
+    }
+
+    @objc private func pin(_ sender: NSMenuItem) {
+        guard let s = sender.representedObject as? Session else { return }
+        PinnedStore.pin(PinnedSession(
+            sessionId: s.id, cwd: s.cwd,
+            entrypoint: s.entrypoint.rawValue, title: s.title))
+        render()
+    }
+
+    @objc private func unpin(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        PinnedStore.unpin(id)
+        render()
+    }
+
+    @objc private func reopen(_ sender: NSMenuItem) {
+        guard let record = sender.representedObject as? PinnedSession else { return }
+        SessionLauncher.reopen(record)
     }
 
     @objc private func showHeadroomInstall() {

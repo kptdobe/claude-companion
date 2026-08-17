@@ -26,6 +26,11 @@ Terminal CLI, the VS Code extension, and the Claude Desktop app.
 - **Usage limits** from your subscription — the console "Your usage limits"
   figures (e.g. `$630.27 of $1,400.00 · 45% used`, or the session/weekly
   rate-limit windows), read from headroom's polled cache when available.
+- **Pin a session** (⌥-click a session → **Pin**) so it stays in the menu even
+  after you close it. Click a pinned-but-closed session to **reopen** it — a new
+  Terminal resumes the conversation (`claude --resume`, through headroom when
+  it's installed). ⌥-click a pinned row to **Unpin**. Pins persist across
+  restarts.
 - **Notifications** when a session starts **waiting for you** or **finishes**
   (toggle in the menu).
 
@@ -142,6 +147,8 @@ swift build
 | `Sources/ClaudeCompanion/UsageStore.swift` | incremental transcript scan → per-session + today/30-day totals |
 | `Sources/ClaudeCompanion/HeadroomStore.swift` | detect the headroom CLI + read its savings ledger and subscription usage-limit cache |
 | `Sources/ClaudeCompanion/Notifier.swift` | user notifications on session state changes |
+| `Sources/ClaudeCompanion/PinnedSessions.swift` | pinned-session model + `UserDefaults` store |
+| `Sources/ClaudeCompanion/SessionLauncher.swift` | reopen a closed session (`claude --resume` in Terminal) |
 | `scripts/claude-companion-hook` | per-event state writer (runs inside Claude Code) |
 | `scripts/install-hooks.mjs` | wires the hooks into `settings.json` (dry-run by default) |
 | `scripts/setup-signing.sh` | one-time stable self-signed code-signing identity |

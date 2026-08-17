@@ -551,6 +551,79 @@ final class UsageStoreTests: XCTestCase {
     }
 }
 
+final class PinnedStoreTests: XCTestCase {
+    private func freshDefaults() -> UserDefaults {
+        UserDefaults(suiteName: "pin-test-\(UUID().uuidString)")!
+    }
+    private func pin(_ id: String, cwd: String = "/p") -> PinnedSession {
+        PinnedSession(sessionId: id, cwd: cwd, entrypoint: "cli", title: nil)
+    }
+
+    func testPinAndIsPinned() {
+        let d = freshDefaults()
+        XCTAssertFalse(PinnedStore.isPinned("a", d))
+        PinnedStore.pin(pin("a"), d)
+        XCTAssertTrue(PinnedStore.isPinned("a", d))
+        XCTAssertEqual(PinnedStore.all(d).map(\.sessionId), ["a"])
+    }
+
+    func testRepinDedupesAndRefreshesMetadata() {
+        let d = freshDefaults()
+        PinnedStore.pin(pin("a", cwd: "/old"), d)
+        PinnedStore.pin(PinnedSession(sessionId: "a", cwd: "/new",
+                                      entrypoint: "cli", title: "T"), d)
+        let all = PinnedStore.all(d)
+        XCTAssertEqual(all.count, 1, "same id must not duplicate")
+        XCTAssertEqual(all.first?.cwd, "/new")
+        XCTAssertEqual(all.first?.title, "T")
+    }
+
+    func testOrderPreservedAndUnpin() {
+        let d = freshDefaults()
+        ["a", "b", "c"].forEach { PinnedStore.pin(pin($0), d) }
+        XCTAssertEqual(PinnedStore.all(d).map(\.sessionId), ["a", "b", "c"])
+        PinnedStore.unpin("b", d)
+        XCTAssertEqual(PinnedStore.all(d).map(\.sessionId), ["a", "c"])
+    }
+
+    func testEncodeDecodeRoundTrip() {
+        let items = [pin("a"), PinnedSession(sessionId: "b", cwd: "/x",
+                                             entrypoint: "claude-vscode", title: "Fix bug")]
+        XCTAssertEqual(PinnedStore.decode(PinnedStore.encode(items)), items)
+        XCTAssertEqual(PinnedStore.decode(Data("garbage".utf8)), [])
+    }
+}
+
+final class SessionLauncherTests: XCTestCase {
+    func testResumeCommandThroughHeadroom() {
+        let cmd = SessionLauncher.resumeCommand(
+            cwd: "/Users/me/proj", sessionId: "abc-123",
+            headroomPath: "/Users/me/.local/bin/headroom")
+        XCTAssertEqual(cmd,
+            "cd '/Users/me/proj' && '/Users/me/.local/bin/headroom' wrap claude --resume abc-123")
+    }
+
+    func testResumeCommandPlainWhenNoHeadroom() {
+        let cmd = SessionLauncher.resumeCommand(
+            cwd: "/Users/me/proj", sessionId: "abc-123", headroomPath: nil)
+        XCTAssertEqual(cmd, "cd '/Users/me/proj' && claude --resume abc-123")
+    }
+
+    func testCwdWithSpaceAndApostropheIsEscaped() {
+        let cmd = SessionLauncher.resumeCommand(
+            cwd: "/Users/me/it's here", sessionId: "id", headroomPath: nil)
+        // The apostrophe is closed/escaped/reopened: it's → it'\''s
+        XCTAssertEqual(cmd, "cd '/Users/me/it'\\''s here' && claude --resume id")
+    }
+
+    func testAppleScriptEscapesQuotesAndBackslashes() {
+        let script = SessionLauncher.terminalAppleScript(forCommand: #"echo "hi\ok""#)
+        XCTAssertTrue(script.contains(#"do script "echo \"hi\\ok\"""#),
+                      "quotes and backslashes must be escaped for the AS literal")
+        XCTAssertTrue(script.contains("tell application \"Terminal\""))
+    }
+}
+
 final class WindowActivatorTests: XCTestCase {
     func testBestWorkspacePicksContainingFolder() {
         let locks = [
