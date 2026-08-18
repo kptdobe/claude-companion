@@ -9,9 +9,16 @@ enum SessionMerger {
     ///   - states: hook state keyed by sessionId.
     ///   - isAlive: returns true if a pid is still running.
     ///   - now: current time (injectable for tests).
-    ///   - thinkingTimeout: a `thinking` state with no update for longer than
-    ///     this is treated as stale (crashed/orphaned turn) and demoted to
-    ///     `.unknown`, so it stops spinning the icon and drops out of the list.
+    ///   - idleTimeout: a non-tool `thinking` state quiet for longer than this
+    ///     is treated as a turn that ended without a `Stop`/`SessionEnd` hook —
+    ///     an interrupt (Esc doesn't fire `Stop`) or a dropped terminal event —
+    ///     and demoted to `.idle`, so the spinner clears to "done" instead of
+    ///     spinning until `thinkingTimeout`. Demoting to `.idle` (not `.unknown`)
+    ///     is deliberately safe: if the session was in fact still generating, the
+    ///     next hook refreshes its timestamp and it flips straight back.
+    ///   - thinkingTimeout: a `thinking` state with no update for even longer is
+    ///     treated as stale (crashed/orphaned turn) and demoted to `.unknown`, so
+    ///     it stops spinning the icon and drops out of the list entirely.
     ///   - pendingToolTimeout: a `PreToolUse` (tool about to run) with no
     ///     completion for longer than this is almost certainly blocked on a
     ///     permission prompt — there is no `Notification` hook for that — so it
@@ -21,6 +28,7 @@ enum SessionMerger {
         states: [String: StateRecord],
         isAlive: (Int) -> Bool,
         now: Date = Date(),
+        idleTimeout: TimeInterval = 120,
         thinkingTimeout: TimeInterval = 600,
         pendingToolTimeout: TimeInterval = 15
     ) -> [Session] {
@@ -45,14 +53,19 @@ enum SessionMerger {
             //    auto-approval window is blocked on a permission prompt (no
             //    Notification hook fires for those) → .waiting, and it STAYS
             //    waiting however long, so you don't forget it after stepping away;
-            //  - non-tool "thinking" (a generation that went silent) for very
-            //    long is a crashed/orphaned turn → hide (.unknown).
+            //  - non-tool "thinking" quiet past the very long window is a
+            //    crashed/orphaned turn → hide (.unknown);
+            //  - non-tool "thinking" quiet past the shorter window is a turn that
+            //    ended without a Stop hook (an Esc interrupt doesn't fire Stop) →
+            //    .idle, so the icon stops spinning and shows "done".
             if activity == .thinking {
                 let quiet = now.timeIntervalSince(last)
                 if state?.event == "PreToolUse", quiet > pendingToolTimeout {
                     activity = .waiting
                 } else if quiet > thinkingTimeout {
                     activity = .unknown
+                } else if quiet > idleTimeout {
+                    activity = .idle
                 }
             }
 
@@ -115,6 +128,8 @@ final class SessionMonitor {
     private(set) var headroom: HeadroomSavings?
     /// Subscription usage limits from headroom's polled cache.
     private(set) var subscription: SubscriptionUsage?
+    /// Live compression-proxy health from its `/health` endpoint.
+    private(set) var health: HeadroomHealth?
 
     /// Called on the main thread whenever the merged list changes.
     var onChange: (([Session]) -> Void)?
@@ -124,6 +139,8 @@ final class SessionMonitor {
     var onHeadroom: ((HeadroomSavings?) -> Void)?
     /// Called on the main thread whenever the subscription usage changes.
     var onSubscription: ((SubscriptionUsage?) -> Void)?
+    /// Called on the main thread whenever the proxy health changes.
+    var onHealth: ((HeadroomHealth?) -> Void)?
 
     init(claudeDir: URL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".claude")) {
@@ -185,6 +202,7 @@ final class SessionMonitor {
         usageQueue.async { [weak self] in
             let savings = HeadroomStore.fetchSavings()
             let subscription = HeadroomStore.readSubscription()
+            let health = HeadroomStore.fetchHealth()
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.headroomBusy = false
@@ -196,6 +214,10 @@ final class SessionMonitor {
                 if subscription != self.subscription {
                     self.subscription = subscription
                     self.onSubscription?(subscription)
+                }
+                if health != self.health {
+                    self.health = health
+                    self.onHealth?(health)
                 }
             }
         }

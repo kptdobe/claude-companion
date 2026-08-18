@@ -12,6 +12,32 @@ struct HeadroomSavings: Equatable {
     var lifetimeCostSaved = 0.0
 }
 
+/// Live health of the local headroom compression proxy, read from its
+/// `/health` endpoint. Tells you whether headroom is actually intercepting and
+/// compressing traffic right now (the savings ledger is historical; this is the
+/// live picture).
+struct HeadroomHealth: Equatable {
+    /// Overall service status is "healthy".
+    var healthy: Bool
+    /// The proxy has finished startup and is serving.
+    var ready: Bool
+    var version: String
+    var uptimeSeconds: Double
+    /// Upstream provider the proxy forwards to (e.g. "anthropic").
+    var backend: String?
+    /// Active savings profile (e.g. "coding").
+    var savingsProfile: String?
+    /// The kompress compression engine's backend (e.g. "onnx"), when enabled.
+    var compressionBackend: String?
+    /// kompress is enabled and reporting healthy.
+    var compressionHealthy: Bool
+    /// The upstream provider connection is healthy.
+    var upstreamHealthy: Bool
+    /// Compressions running right now, and requests queued waiting for a worker.
+    var activeCompressions: Int
+    var queuedCompressions: Int
+}
+
 /// A window of subscription usage (either the monthly dollar spend limit or a
 /// Pro/Max rate-limit window), read from headroom's polled subscription cache.
 struct SubscriptionUsage: Equatable {
@@ -106,6 +132,55 @@ enum HeadroomStore {
             lifetimeCostSaved: report.lifetime.cost_usd)
     }
 
+    // MARK: - Compression proxy health
+
+    /// The proxy's health endpoint (headroom's default local listen port).
+    private static let healthURL = URL(string: "http://127.0.0.1:8787/health")!
+
+    /// Fetch the compression proxy's live health. Returns nil when the proxy
+    /// isn't listening (headroom installed but not running, or a different
+    /// port). Blocks briefly — call it off the main thread on a poll.
+    static func fetchHealth() -> HeadroomHealth? {
+        var request = URLRequest(url: healthURL, timeoutInterval: 2)
+        request.httpMethod = "GET"
+
+        var payload: Data?
+        let done = DispatchSemaphore(value: 0)
+        let task = URLSession.shared.dataTask(with: request) { data, response, _ in
+            if let http = response as? HTTPURLResponse, http.statusCode == 200 {
+                payload = data
+            }
+            done.signal()
+        }
+        task.resume()
+        // A hair above the request timeout so a hung socket can't wedge the poll.
+        guard done.wait(timeout: .now() + 3) == .success, let payload else {
+            task.cancel()
+            return nil
+        }
+        return parseHealth(payload)
+    }
+
+    /// Pure decode of a `/health` payload — unit-testable.
+    static func parseHealth(_ data: Data) -> HeadroomHealth? {
+        guard let f = try? JSONDecoder().decode(HealthFile.self, from: data) else {
+            return nil
+        }
+        let kompress = f.checks?.kompress
+        return HeadroomHealth(
+            healthy: f.status == "healthy",
+            ready: f.ready ?? false,
+            version: f.version ?? "?",
+            uptimeSeconds: f.uptime_seconds ?? 0,
+            backend: f.config?.backend,
+            savingsProfile: f.config?.savings_profile,
+            compressionBackend: kompress?.backend,
+            compressionHealthy: (kompress?.enabled ?? false) && kompress?.status == "healthy",
+            upstreamHealthy: f.checks?.upstream?.status == "healthy",
+            activeCompressions: f.runtime?.compression_executor?.in_flight ?? 0,
+            queuedCompressions: f.runtime?.compression_executor?.queued ?? 0)
+    }
+
     // MARK: - Subscription usage limits
 
     private static var subscriptionPath: URL {
@@ -165,6 +240,40 @@ enum HeadroomStore {
         struct Window: Decodable {
             let tokens_saved: Int
             let cost_usd: Double
+        }
+    }
+
+    // MARK: - `/health` shape (only the fields we surface)
+
+    private struct HealthFile: Decodable {
+        let status: String?
+        let ready: Bool?
+        let version: String?
+        let uptime_seconds: Double?
+        let checks: Checks?
+        let runtime: Runtime?
+        let config: Config?
+
+        struct Checks: Decodable {
+            let upstream: Check?
+            let kompress: Kompress?
+        }
+        struct Check: Decodable { let status: String? }
+        struct Kompress: Decodable {
+            let enabled: Bool?
+            let status: String?
+            let backend: String?
+        }
+        struct Runtime: Decodable {
+            let compression_executor: Executor?
+            struct Executor: Decodable {
+                let in_flight: Int?
+                let queued: Int?
+            }
+        }
+        struct Config: Decodable {
+            let backend: String?
+            let savings_profile: String?
         }
     }
 

@@ -10,6 +10,13 @@ final class StatusItemController: NSObject {
 
     /// Last-seen activity per session, to detect state transitions to notify on.
     private var previousActivities: [String: SessionActivity] = [:]
+    /// Notifications are deferred by this long: a session must hold its new state
+    /// for the full window before the banner fires. A session that flips back to
+    /// working (or on to another state) within the window cancels its pending
+    /// timer, so brief blips between tool calls don't spam notifications.
+    private let notifyDelay: TimeInterval = 60
+    /// Per-session pending notification timers, keyed by session id.
+    private var pendingNotifications: [String: Timer] = [:]
     private var notificationsEnabled: Bool =
         UserDefaults.standard.object(forKey: "notifyOnStatusChange") as? Bool ?? true
 
@@ -22,6 +29,7 @@ final class StatusItemController: NSObject {
     private var latestUsage = UsageSnapshot()
     private var latestHeadroom: HeadroomSavings?
     private var latestSubscription: SubscriptionUsage?
+    private var latestHealth: HeadroomHealth?
 
     init(monitor: SessionMonitor = SessionMonitor()) {
         self.monitor = monitor
@@ -46,9 +54,17 @@ final class StatusItemController: NSObject {
             self?.latestSubscription = subscription
             self?.render()
         }
+        monitor.onHealth = { [weak self] health in
+            self?.latestHealth = health
+            self?.render()
+        }
         monitor.start()
         latestSessions = monitor.sessions
         render()
+
+        notifier.onClick = { [weak self] sessionId in
+            self?.openSession(id: sessionId)
+        }
 
         promptToInstallHeadroomIfNeeded()
     }
@@ -315,20 +331,94 @@ final class StatusItemController: NSObject {
 
     private func addHeadroomSection(to menu: NSMenu) {
         menu.addItem(.separator())
-        if let h = latestHeadroom {
-            menu.addItem(sectionHeader("Headroom savings"))
-            let today = "\(UsageFormat.cost(h.costSavedToday)) · \(UsageFormat.tokens(h.tokensSavedToday)) tokens"
-            let last30 = "\(UsageFormat.cost(h.costSaved30d)) · \(UsageFormat.tokens(h.tokensSaved30d)) tokens"
-            menu.addItem(sectionInfo( "Today: \(today)"))
-            menu.addItem(sectionInfo( "Last 30 days: \(last30)"))
-        } else {
+
+        // Nothing installed and nothing to show → offer the install prompt.
+        guard HeadroomStore.isInstalled || latestHeadroom != nil || latestHealth != nil
+        else {
             let install = NSMenuItem(
                 title: "Install headroom.ai to save tokens…",
                 action: #selector(showHeadroomInstall), keyEquivalent: "")
             install.target = self
             install.image = symbol("wand.and.stars", color: nil)
             menu.addItem(install)
+            return
         }
+
+        // Clickable header opens the proxy dashboard.
+        menu.addItem(headroomHeader())
+
+        if let h = latestHeadroom {
+            let today = "\(UsageFormat.cost(h.costSavedToday)) · \(UsageFormat.tokens(h.tokensSavedToday)) tokens"
+            let last30 = "\(UsageFormat.cost(h.costSaved30d)) · \(UsageFormat.tokens(h.tokensSaved30d)) tokens"
+            menu.addItem(sectionInfo("Today: \(today)"))
+            menu.addItem(sectionInfo("Last 30 days: \(last30)"))
+        }
+
+        addHeadroomHealthRows(to: menu)
+    }
+
+    /// The clickable "Headroom proxy" section header — opens the dashboard.
+    private func headroomHeader() -> NSMenuItem {
+        let item = NSMenuItem(
+            title: "Headroom proxy", action: #selector(openHeadroomDashboard),
+            keyEquivalent: "")
+        item.target = self
+        item.attributedTitle = NSAttributedString(string: "Headroom proxy", attributes: [
+            .font: NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .semibold),
+            .foregroundColor: NSColor.labelColor,
+        ])
+        item.toolTip = "Open the headroom dashboard"
+        return item
+    }
+
+    /// Live compression-proxy health from its `/health` endpoint: is headroom
+    /// actually intercepting traffic right now, and what's it doing. Rendered
+    /// under the "Headroom proxy" header (no header of its own).
+    private func addHeadroomHealthRows(to menu: NSMenu) {
+        guard let h = latestHealth else {
+            menu.addItem(statusRow(
+                "Not running — traffic isn't being compressed", healthy: false))
+            return
+        }
+
+        let ok = h.healthy && h.ready
+        var status = ok ? "Healthy" : (h.ready ? "Degraded" : "Starting up")
+        if h.version != "?" { status += " · v\(h.version)" }
+        if h.uptimeSeconds > 0 { status += " · up \(Self.uptimePhrase(h.uptimeSeconds))" }
+        menu.addItem(statusRow(status, healthy: ok))
+
+        // Backend / profile / compression engine — the "what's configured" line.
+        var detail: [String] = []
+        if let b = h.backend { detail.append(b) }
+        if let p = h.savingsProfile { detail.append("\(p) profile") }
+        if h.compressionHealthy, let cb = h.compressionBackend {
+            detail.append("\(cb) compression")
+        }
+        if !detail.isEmpty { menu.addItem(sectionInfo(detail.joined(separator: " · "))) }
+
+        // Live activity, only when there's something in flight.
+        if h.activeCompressions > 0 || h.queuedCompressions > 0 {
+            var activity = "Compressing \(h.activeCompressions)"
+            if h.queuedCompressions > 0 { activity += " · \(h.queuedCompressions) queued" }
+            menu.addItem(sectionInfo(activity))
+        }
+    }
+
+    /// A section-info row led by a colored status dot.
+    private func statusRow(_ text: String, healthy: Bool) -> NSMenuItem {
+        let item = sectionInfo(text)
+        item.image = symbol("circle.fill", color: healthy ? .systemGreen : .systemOrange)
+        return item
+    }
+
+    /// "45s" / "12m" / "3h 20m" / "2d 4h" from an uptime in seconds.
+    private static func uptimePhrase(_ seconds: Double) -> String {
+        let s = Int(seconds)
+        let d = s / 86_400, h = (s % 86_400) / 3_600, m = (s % 3_600) / 60
+        if d > 0 { return "\(d)d \(h)h" }
+        if h > 0 { return "\(h)h \(m)m" }
+        if m > 0 { return "\(m)m" }
+        return "\(s)s"
     }
 
     // Non-actionable display rows. They carry no action, so with the menu's
@@ -377,26 +467,54 @@ final class StatusItemController: NSObject {
     /// Notify when a session becomes attention-worthy: it starts waiting on you,
     /// or it finishes its turn. First sightings (and the constant thinking churn)
     /// are recorded silently so launch and normal work don't spam notifications.
+    ///
+    /// The banner is deferred by `notifyDelay`: any state change cancels the
+    /// session's pending timer, so a session only notifies once it has *held*
+    /// the new state for the full window. A turn that briefly goes idle between
+    /// tool calls, then resumes thinking, cancels its own timer and stays quiet.
     private func handleTransitions(_ sessions: [Session]) {
         let liveIds = Set(sessions.map(\.id))
         for session in sessions {
             let prev = previousActivities[session.id]
             let new = session.activity
             defer { previousActivities[session.id] = new }
-            guard notificationsEnabled, let prev, prev != new else { continue }
+            guard let prev, prev != new else { continue }
+
+            // Any transition invalidates a pending banner for this session.
+            pendingNotifications.removeValue(forKey: session.id)?.invalidate()
+            guard notificationsEnabled else { continue }
+
+            let body: String?
+            let sound: Bool
             switch new {
-            case .waiting:
-                notifier.post(title: resolved(session).title,
-                              body: "Waiting for you", sound: true)
-            case .idle:
-                notifier.post(title: resolved(session).title,
-                              body: "Done", sound: false)
-            default:
-                break  // thinking / unknown aren't worth a notification
+            case .waiting: body = "Waiting for you"; sound = true
+            case .idle:    body = "Done";            sound = false
+            default:       body = nil;               sound = false  // thinking / unknown
             }
+            guard let body else { continue }
+            scheduleNotification(for: session, body: body, sound: sound)
         }
-        // Forget sessions that are gone so a reused id doesn't inherit old state.
+        // Forget sessions that are gone so a reused id doesn't inherit old state,
+        // and cancel any banners still pending for them.
         previousActivities = previousActivities.filter { liveIds.contains($0.key) }
+        for (id, timer) in pendingNotifications where !liveIds.contains(id) {
+            timer.invalidate()
+            pendingNotifications.removeValue(forKey: id)
+        }
+    }
+
+    /// Arm a timer to post the banner once the session has held its state for
+    /// `notifyDelay`. Replaces any timer already pending for the session.
+    private func scheduleNotification(for session: Session, body: String, sound: Bool) {
+        let title = resolved(session).title
+        let id = session.id
+        let timer = Timer.scheduledTimer(withTimeInterval: notifyDelay, repeats: false) {
+            [weak self] _ in
+            guard let self else { return }
+            self.pendingNotifications.removeValue(forKey: id)
+            self.notifier.post(sessionId: id, title: title, body: body, sound: sound)
+        }
+        pendingNotifications[id] = timer
     }
 
     // MARK: - Actions
@@ -410,6 +528,19 @@ final class StatusItemController: NSObject {
     @objc private func jump(_ sender: NSMenuItem) {
         guard let session = sender.representedObject as? Session else { return }
         WindowActivator.activate(session)
+    }
+
+    /// Open a session by id the same way its menu row would: jump to it if
+    /// still live, otherwise copy its resume command if it's a closed pinned
+    /// session. Used when a notification banner is clicked.
+    private func openSession(id: String) {
+        if let session = latestSessions.first(where: { $0.id == id }) {
+            WindowActivator.activate(resolved(session))
+            return
+        }
+        if let record = PinnedStore.all().first(where: { $0.sessionId == id }) {
+            SessionLauncher.copyResumeCommand(record)
+        }
     }
 
     @objc private func pin(_ sender: NSMenuItem) {
@@ -433,6 +564,12 @@ final class StatusItemController: NSObject {
 
     @objc private func showHeadroomInstall() {
         presentHeadroomInstall(firstRun: false)
+    }
+
+    @objc private func openHeadroomDashboard() {
+        if let url = URL(string: "http://localhost:8787/dashboard") {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     @objc private func quit() {

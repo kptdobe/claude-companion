@@ -189,6 +189,34 @@ final class SessionMergerTests: XCTestCase {
                        ["fresh", "waiting"], "zombie hidden")
     }
 
+    func testInterruptedThinkingBecomesIdleNotHidden() {
+        // Pressing Esc interrupts a turn without firing the Stop hook, so the
+        // last event stays "thinking". Once it's been quiet past the idle window
+        // (but well short of the crash window) it should settle to .idle (green
+        // "done") — clearing the spinner — rather than spinning until it's hidden.
+        let now = Date(timeIntervalSince1970: 100_000)
+        let records = [record("working", pid: 1), record("interrupted", pid: 2),
+                       record("zombie", pid: 3)]
+        let states = [
+            // a tool completed 10s ago — still legitimately working
+            "working": state("working", "thinking",
+                             ts: now.timeIntervalSince1970 - 10, event: "PostToolUse"),
+            // interrupted 3 min ago — turn ended, no Stop hook → done
+            "interrupted": state("interrupted", "thinking",
+                                 ts: now.timeIntervalSince1970 - 180, event: "PostToolUse"),
+            // quiet for an hour → crashed/orphaned → hidden
+            "zombie": state("zombie", "thinking",
+                            ts: now.timeIntervalSince1970 - 3600, event: "UserPromptSubmit"),
+        ]
+        let merged = SessionMerger.merge(
+            records: records, states: states, isAlive: { _ in true },
+            now: now, idleTimeout: 120, thinkingTimeout: 600)
+        let byId = Dictionary(uniqueKeysWithValues: merged.map { ($0.id, $0) })
+        XCTAssertEqual(byId["working"]?.activity, .thinking, "recent work preserved")
+        XCTAssertEqual(byId["interrupted"]?.activity, .idle, "interrupted turn → done, not spinning")
+        XCTAssertEqual(byId["zombie"]?.activity, .unknown, "long-orphaned still hidden")
+    }
+
     func testPendingToolPromptBecomesWaiting() {
         // No Notification hook fires for permission prompts, so a tool stuck on
         // PreToolUse (not completed) for a while means Claude is blocked on you.
@@ -478,6 +506,49 @@ final class SubscriptionUsageTests: XCTestCase {
     func testMalformedInputYieldsNil() {
         XCTAssertNil(HeadroomStore.parseSubscription(Data("not json".utf8)))
         XCTAssertNil(HeadroomStore.parseSubscription(Data("{}".utf8)))
+    }
+}
+
+final class HeadroomHealthTests: XCTestCase {
+    func testDecodesRealHealthPayload() {
+        // Trimmed from a live `/health` response.
+        let json = #"""
+        {"service":"headroom-proxy","status":"healthy","ready":true,"version":"0.35.0","uptime_seconds":6786.344,"checks":{"upstream":{"enabled":true,"ready":true,"status":"healthy","url":"https://api.anthropic.com"},"kompress":{"enabled":true,"ready":true,"status":"healthy","optional":true,"backend":"onnx"}},"runtime":{"compression_executor":{"max_workers":18,"queued":0,"running":0,"in_flight":2}},"config":{"backend":"anthropic","savings_profile":"coding"}}
+        """#.data(using: .utf8)!
+        let h = HeadroomStore.parseHealth(json)
+        XCTAssertEqual(h?.healthy, true)
+        XCTAssertEqual(h?.ready, true)
+        XCTAssertEqual(h?.version, "0.35.0")
+        XCTAssertEqual(h?.uptimeSeconds ?? 0, 6786.344, accuracy: 1e-6)
+        XCTAssertEqual(h?.backend, "anthropic")
+        XCTAssertEqual(h?.savingsProfile, "coding")
+        XCTAssertEqual(h?.compressionBackend, "onnx")
+        XCTAssertEqual(h?.compressionHealthy, true)
+        XCTAssertEqual(h?.upstreamHealthy, true)
+        XCTAssertEqual(h?.activeCompressions, 2)
+        XCTAssertEqual(h?.queuedCompressions, 0)
+    }
+
+    func testDisabledKompressIsNotHealthyCompression() {
+        let json = #"""
+        {"status":"healthy","ready":true,"version":"0.35.0","uptime_seconds":10,"checks":{"kompress":{"enabled":false,"status":"disabled","backend":null}},"config":{"backend":"anthropic"}}
+        """#.data(using: .utf8)!
+        let h = HeadroomStore.parseHealth(json)
+        XCTAssertEqual(h?.compressionHealthy, false)
+        XCTAssertNil(h?.compressionBackend)
+    }
+
+    func testMissingFieldsFallBackGracefully() {
+        let h = HeadroomStore.parseHealth(Data(#"{"status":"healthy"}"#.utf8))
+        XCTAssertEqual(h?.healthy, true)
+        XCTAssertEqual(h?.ready, false)
+        XCTAssertEqual(h?.version, "?")
+        XCTAssertEqual(h?.uptimeSeconds, 0)
+        XCTAssertEqual(h?.activeCompressions, 0)
+    }
+
+    func testMalformedInputYieldsNil() {
+        XCTAssertNil(HeadroomStore.parseHealth(Data("not json".utf8)))
     }
 }
 
